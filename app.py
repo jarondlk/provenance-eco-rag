@@ -108,11 +108,13 @@ ollama_url = st.sidebar.text_input(
 )
 config.OLLAMA_BASE_URL = ollama_url
 
-# Try to list models
+# Try to list models (filter out embedding-only models)
+_EMBED_ONLY = {"nomic-embed-text", "mxbai-embed-large", "all-minilm", "snowflake-arctic-embed"}
 try:
     import requests
     resp = requests.get(f"{ollama_url}/api/tags", timeout=3)
-    model_names = [m["name"] for m in resp.json().get("models", [])]
+    model_names = [m["name"] for m in resp.json().get("models", [])
+                   if not any(e in m["name"] for e in _EMBED_ONLY)]
 except Exception:
     model_names = []
 
@@ -134,6 +136,28 @@ if st.sidebar.button("🗑️ Reset chat"):
     st.session_state.pending_prompt = None
     st.rerun()
 
+# Backend status
+@st.cache_data(ttl=30, show_spinner=False)
+def _check_pg():
+    try:
+        from sqlalchemy import create_engine, text
+        e = create_engine(config.DATABASE_URL, pool_pre_ping=True)
+        with e.connect() as c:
+            n = c.execute(text(
+                "SELECT count(*) FROM retrieval_document WHERE embedding IS NOT NULL"
+            )).scalar()
+        return n
+    except Exception:
+        return 0
+
+pg_embed_count = _check_pg()
+if pg_embed_count > 0:
+    st.sidebar.success(f"🔗 pgvector active ({pg_embed_count} embedded docs)")
+    USE_PG = True
+else:
+    st.sidebar.info("📂 Local BM25 search")
+    USE_PG = False
+
 
 # ═══════════════════════════════════════════
 # Load data
@@ -154,8 +178,8 @@ retriever = get_retriever()
 st.title("🌊 Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
-tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_stats = st.tabs(
-    ["💬 Chat", "📋 Evidence Explorer", "🌡️ CTD Profiles", "🧬 Taxa", "🛰️ SST", "📊 Stats"]
+tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_db, tab_stats = st.tabs(
+    ["💬 Chat", "📋 Evidence Explorer", "🌡️ CTD Profiles", "🧬 Taxa", "🛰️ SST", "🗄️ Database", "📊 Stats"]
 )
 
 
@@ -183,8 +207,13 @@ with tab_chat:
                 # Retrieve
                 src_filter = None if filter_source == "All" else filter_source
                 bay_filter = None if filter_bay == "All" else filter_bay[0]
-                retrieved = retriever.search(user_text, k=top_k_sources,
-                                             source_type=src_filter, bay=bay_filter)
+                if USE_PG:
+                    from orchestration.unified import retrieve
+                    retrieved = retrieve(user_text, k=top_k_sources,
+                                         source_type=src_filter, bay=bay_filter)
+                else:
+                    retrieved = retriever.search(user_text, k=top_k_sources,
+                                                 source_type=src_filter, bay=bay_filter)
 
                 with st.expander(f"📎 Retrieved {len(retrieved)} sources", expanded=False):
                     for r in retrieved:
@@ -254,7 +283,11 @@ with tab_explore:
     if eq:
         sf = None if esrc == "All" else esrc
         bf = None if ebay == "All" else ebay
-        results = retriever.search(eq, k=20, source_type=sf, bay=bf)
+        if USE_PG:
+            from orchestration.unified import retrieve
+            results = retrieve(eq, k=20, source_type=sf, bay=bf)
+        else:
+            results = retriever.search(eq, k=20, source_type=sf, bay=bf)
         st.caption(f"Found {len(results)} results")
         for r in results:
             icon = {"ctd": "🌡️", "metagenome": "🧬", "remote_sensing": "🛰️"}.get(r.get("source_type"), "📄")
@@ -449,7 +482,7 @@ with tab_stats:
         cov = registry[["sample_id", "bay", "has_run_qc", "has_kraken", "has_metaeuk", "has_ctd"]].copy()
         cov = cov.rename(columns={"has_run_qc": "QC", "has_kraken": "Kraken",
                                    "has_metaeuk": "MetaEuk", "has_ctd": "CTD"})
-        st.dataframe(cov, use_container_width=True, height=400)
+        st.dataframe(cov, width="stretch", height=400)
 
         st.markdown("### Samples by bay")
         bay_counts = registry["bay"].value_counts()
@@ -465,6 +498,268 @@ with tab_stats:
         st.metric("Registered files", prov_count)
     else:
         st.caption("No provenance registry found.")
+
+
+# ═══════════════════════════════════════════
+# TAB: Database Explorer
+# ═══════════════════════════════════════════
+with tab_db:
+    st.subheader("🗄️ Database Explorer")
+
+    if not USE_PG:
+        st.warning("PostgreSQL is not connected. Start the database with `podman compose up -d`.")
+    else:
+        from sqlalchemy import create_engine, text, inspect
+        _db_engine = create_engine(config.DATABASE_URL, pool_pre_ping=True)
+
+        # ── Connection & Schema Overview ──
+        with _db_engine.connect() as _conn:
+            pg_ver = _conn.execute(text("SELECT version()")).scalar()
+        inspector = inspect(_db_engine)
+        table_names = inspector.get_table_names()
+
+        st.caption(f"Connected: `{pg_ver[:60]}…` • Port **{config.DATABASE_URL.split(':')[-1].split('/')[0]}** • Tables: **{len(table_names)}**")
+
+        # ── Sub-tabs inside Database ──
+        db_sub1, db_sub2, db_sub3, db_sub4 = st.tabs(
+            ["📋 Table Browser", "🔎 SQL Console", "📐 Schema", "📊 Embeddings"]
+        )
+
+        # ──────────────────────────────────
+        # Sub-tab 1: Table Browser
+        # ──────────────────────────────────
+        with db_sub1:
+            col_tbl, col_opts = st.columns([1, 3])
+
+            with col_tbl:
+                selected_table = st.selectbox("Table", table_names, index=0, key="db_table")
+
+                # Row count
+                with _db_engine.connect() as _conn:
+                    row_count = _conn.execute(text(f"SELECT count(*) FROM {selected_table}")).scalar()
+                st.metric("Rows", f"{row_count:,}")
+
+                # Column info
+                columns_info = inspector.get_columns(selected_table)
+                col_names = [c["name"] for c in columns_info]
+                st.caption(f"{len(col_names)} columns")
+
+            with col_opts:
+                # Filters
+                fc1, fc2, fc3 = st.columns([2, 1, 1])
+                with fc1:
+                    where_clause = st.text_input(
+                        "WHERE clause (optional)",
+                        placeholder="e.g. bay = 'O' AND source_type = 'ctd'",
+                        key="db_where",
+                    )
+                with fc2:
+                    order_col = st.selectbox("ORDER BY", [""] + col_names, index=0, key="db_order")
+                with fc3:
+                    limit = st.number_input("LIMIT", min_value=1, max_value=5000, value=100, key="db_limit")
+
+                # Build and execute query
+                query_str = f"SELECT * FROM {selected_table}"
+                if where_clause:
+                    query_str += f" WHERE {where_clause}"
+                if order_col:
+                    query_str += f" ORDER BY {order_col}"
+                query_str += f" LIMIT {limit}"
+
+                try:
+                    df_result = pd.read_sql(text(query_str), _db_engine)
+
+                    # Hide embedding column (too large to display)
+                    display_cols = [c for c in df_result.columns if c not in ("embedding", "text_tsv")]
+                    st.dataframe(df_result[display_cols], width="stretch", height=420)
+
+                    # Download
+                    csv_data = df_result[display_cols].to_csv(index=False)
+                    st.download_button(
+                        f"⬇️ Download {selected_table} ({len(df_result)} rows)",
+                        data=csv_data,
+                        file_name=f"{selected_table}_export.csv",
+                        mime="text/csv",
+                    )
+                except Exception as e:
+                    st.error(f"Query error: {e}")
+
+                # Row detail inspector
+                if "df_result" in dir() and not df_result.empty:
+                    with st.expander("🔍 Row Inspector", expanded=False):
+                        row_idx = st.number_input("Row index", 0, len(df_result) - 1, 0, key="db_row_idx")
+                        row_data = df_result.iloc[row_idx]
+                        for col_name, val in row_data.items():
+                            if col_name in ("embedding", "text_tsv"):
+                                st.text(f"{col_name}: [hidden – {type(val).__name__}]")
+                            elif col_name == "text" and isinstance(val, str) and len(val) > 200:
+                                st.markdown(f"**{col_name}:**")
+                                st.text_area("Text content", val, height=150, key=f"db_detail_{col_name}")
+                            else:
+                                st.markdown(f"**{col_name}:** {val}")
+
+        # ──────────────────────────────────
+        # Sub-tab 2: SQL Console
+        # ──────────────────────────────────
+        with db_sub2:
+            st.markdown("Run **read-only** SQL queries against the database.")
+
+            default_sql = """-- Example queries:
+-- SELECT source_type, count(*) FROM retrieval_document GROUP BY source_type;
+-- SELECT sample_id, surface_temperature, mean_salinity FROM ctd_summary ORDER BY ctd_date LIMIT 20;
+-- SELECT * FROM cross_source_link WHERE link_type = 'time_match' LIMIT 10;
+
+SELECT source_type, count(*) AS n_docs,
+       round(avg(length(text))) AS avg_text_len
+FROM retrieval_document
+GROUP BY source_type
+ORDER BY n_docs DESC;"""
+
+            sql_input = st.text_area("SQL Query", value=default_sql, height=180, key="db_sql")
+
+            col_run, col_info = st.columns([1, 3])
+            with col_run:
+                run_sql = st.button("▶️ Run Query", key="db_run_sql")
+
+            if run_sql and sql_input.strip():
+                # Safety: block destructive statements
+                sql_upper = sql_input.strip().upper()
+                blocked = ["DROP", "DELETE", "TRUNCATE", "ALTER", "INSERT", "UPDATE", "CREATE"]
+                if any(sql_upper.startswith(kw) for kw in blocked):
+                    st.error("❌ Only SELECT queries are allowed.")
+                else:
+                    try:
+                        import time as _time
+                        t0 = _time.perf_counter()
+                        df_sql = pd.read_sql(text(sql_input), _db_engine)
+                        elapsed = _time.perf_counter() - t0
+
+                        with col_info:
+                            st.caption(f"✅ {len(df_sql)} rows in {elapsed:.3f}s")
+
+                        # Hide embedding columns
+                        display = [c for c in df_sql.columns if c not in ("embedding", "text_tsv")]
+                        st.dataframe(df_sql[display], width="stretch", height=400)
+
+                        st.download_button(
+                            f"⬇️ Download result ({len(df_sql)} rows)",
+                            data=df_sql[display].to_csv(index=False),
+                            file_name="query_result.csv",
+                            mime="text/csv",
+                            key="db_sql_download",
+                        )
+                    except Exception as e:
+                        st.error(f"SQL error: {e}")
+
+        # ──────────────────────────────────
+        # Sub-tab 3: Schema
+        # ──────────────────────────────────
+        with db_sub3:
+            for tname in table_names:
+                cols = inspector.get_columns(tname)
+                pk = inspector.get_pk_constraint(tname)
+                indexes = inspector.get_indexes(tname)
+
+                with st.expander(f"📋 **{tname}** ({len(cols)} columns)", expanded=False):
+                    # Column table
+                    schema_rows = []
+                    pk_cols = set(pk.get("constrained_columns", []))
+                    for c in cols:
+                        schema_rows.append({
+                            "Column": c["name"],
+                            "Type": str(c["type"]),
+                            "Nullable": "✓" if c.get("nullable", True) else "✗",
+                            "PK": "🔑" if c["name"] in pk_cols else "",
+                            "Default": str(c.get("default", "") or ""),
+                        })
+                    st.dataframe(pd.DataFrame(schema_rows), width="stretch", hide_index=True)
+
+                    if indexes:
+                        st.markdown("**Indexes:**")
+                        for idx in indexes:
+                            unique = "UNIQUE " if idx.get("unique") else ""
+                            st.caption(f"  `{idx['name']}` — {unique}{', '.join(idx['column_names'])}")
+
+        # ──────────────────────────────────
+        # Sub-tab 4: Embedding Statistics
+        # ──────────────────────────────────
+        with db_sub4:
+            with _db_engine.connect() as _conn:
+                total_docs = _conn.execute(text("SELECT count(*) FROM retrieval_document")).scalar()
+                embedded = _conn.execute(text(
+                    "SELECT count(*) FROM retrieval_document WHERE embedding IS NOT NULL"
+                )).scalar()
+                fts_count = _conn.execute(text(
+                    "SELECT count(*) FROM retrieval_document WHERE text_tsv IS NOT NULL"
+                )).scalar()
+
+                # Per source type
+                src_stats = _conn.execute(text("""
+                    SELECT source_type,
+                           count(*) AS total,
+                           count(embedding) AS with_embedding,
+                           round(avg(length(text))) AS avg_text_len
+                    FROM retrieval_document
+                    GROUP BY source_type
+                    ORDER BY total DESC
+                """)).fetchall()
+
+                # Cross-source links
+                link_count = _conn.execute(text("SELECT count(*) FROM cross_source_link")).scalar()
+                link_types = _conn.execute(text(
+                    "SELECT link_type, count(*) FROM cross_source_link GROUP BY link_type"
+                )).fetchall()
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total docs", total_docs)
+            c2.metric("With embeddings", f"{embedded}/{total_docs}")
+            c3.metric("With FTS", f"{fts_count}/{total_docs}")
+            c4.metric("Cross-source links", link_count)
+
+            coverage_pct = (embedded / total_docs * 100) if total_docs > 0 else 0
+            if coverage_pct >= 100:
+                st.success(f"✅ 100% embedding coverage ({config.EMBEDDING_MODEL}, {config.EMBEDDING_DIM}-dim)")
+            elif coverage_pct > 0:
+                st.warning(f"⚠️ {coverage_pct:.0f}% embedding coverage — run `scripts/load_db.py --embed`")
+            else:
+                st.error("❌ No embeddings — run `scripts/load_db.py --embed`")
+
+            st.markdown("### Documents by source type")
+            emb_df = pd.DataFrame([
+                {
+                    "Source type": r[0],
+                    "Total": r[1],
+                    "Embedded": r[2],
+                    "Avg text (chars)": int(r[3]) if r[3] else 0,
+                    "Coverage": f"{r[2]/r[1]*100:.0f}%" if r[1] > 0 else "–",
+                }
+                for r in src_stats
+            ])
+            st.dataframe(emb_df, width="stretch", hide_index=True)
+
+            st.markdown("### Cross-source links")
+            for lt, cnt in link_types:
+                st.markdown(f"- **{lt}**: {cnt:,} links")
+
+            # Similarity test tool
+            st.markdown("### 🧪 Similarity Probe")
+            st.caption("Test what a query retrieves via vector vs FTS.")
+            probe_q = st.text_input("Probe query", placeholder="e.g. chlorophyll bloom summer", key="db_probe")
+            if probe_q:
+                from retrieval.hybrid_retriever import hybrid_search
+                probe_results = hybrid_search(probe_q, k=10)
+                st.caption(f"Top 10 hybrid results (RRF fusion):")
+                probe_data = []
+                for r in probe_results:
+                    probe_data.append({
+                        "doc_id": r.doc_id,
+                        "source": r.source_type,
+                        "score": f"{r.score:.4f}",
+                        "vec_rank": r.rank_sources.get("vector", "–"),
+                        "fts_rank": r.rank_sources.get("fts", "–"),
+                        "title": r.title[:80],
+                    })
+                st.dataframe(pd.DataFrame(probe_data), width="stretch", hide_index=True)
 
 
 # ═══════════════════════════════════════════

@@ -66,7 +66,7 @@ SST_LON_MIN, SST_LON_MAX = 141.0, 142.0
 # ---------------------------------------------------------------------------
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://onagawa:onagawa@localhost:5432/onagawa_rag",
+    "postgresql://onagawa:onagawa@localhost:5433/onagawa_rag",
 )
 
 # ---------------------------------------------------------------------------

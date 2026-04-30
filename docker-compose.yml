@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 services:
   postgres:
@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: onagawa
       POSTGRES_DB: onagawa_rag
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
