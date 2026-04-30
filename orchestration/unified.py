@@ -71,9 +71,56 @@ def retrieve(
         )
 
 
+def _load_analysis_context(query: str) -> str:
+    """
+    Load precomputed analysis documents relevant to the query.
+    These are injected as supplementary context in addition to retrieved evidence.
+    """
+    import json
+    from pathlib import Path
+
+    analysis_path = config.ANALYSIS_DIR / "analysis_documents.jsonl"
+    if not analysis_path.exists():
+        return ""
+
+    # Load all analysis docs
+    analysis_docs = []
+    with open(analysis_path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                analysis_docs.append(json.loads(line))
+
+    if not analysis_docs:
+        return ""
+
+    # Simple keyword relevance: inject docs whose text contains query terms
+    query_terms = set(query.lower().split())
+    # Always-relevant ecosystem keywords that trigger analysis injection
+    eco_keywords = {
+        "trend", "trends", "seasonal", "monthly", "correlation", "correlate",
+        "relationship", "diversity", "richness", "evenness", "compare",
+        "comparison", "between", "across", "pattern", "change", "over time",
+        "stratification", "co-occurrence", "cooccurrence", "community",
+        "structure", "composition", "temperature", "salinity", "chlorophyll",
+        "bloom", "dinoflagellate", "diatom", "ecosystem", "bay",
+    }
+
+    # Check if the query is "complex" enough to warrant analysis context
+    if not query_terms.intersection(eco_keywords):
+        return ""
+
+    # Inject all analysis docs (they're small and highly curated)
+    text = "\n=== PRE-COMPUTED ANALYSES ===\n"
+    text += "(These are precomputed ecological relationships for supplementary context.)\n"
+    for doc in analysis_docs:
+        text += f"\n[{doc['id']}] ({doc.get('analysis_type', 'analysis')})\n{doc['text']}\n"
+
+    return text
+
+
 def build_prompt(query: str, results: List[dict]) -> str:
     """
-    Build the provenance-aware system prompt with evidence.
+    Build the provenance-aware system prompt with evidence and analysis context.
     """
     system = """You are an expert marine science assistant for the Onagawa Bay monitoring programme (Japan).
 You analyze CTD water profiles, metagenome taxonomic data, and satellite SST observations.
@@ -84,6 +131,9 @@ RULES:
 3. Distinguish data types: CTD measurements, metagenome taxonomy, satellite SST.
 4. State data gaps explicitly. Report values with units.
 5. When comparing across time/space, note the resolution.
+6. If pre-computed analyses are provided, use them to support your answer about
+   trends, correlations, diversity patterns, or cross-source relationships.
+   Cite analysis docs with [analysis_*] notation.
 
 STUDY SITES:
 • Onagawa Bay (O) ≈ 38.44°N 141.45°E
@@ -98,7 +148,10 @@ STUDY SITES:
         text = r.get("text", "")
         evidence_text += f"\n[{doc_id}] ({src}, {t})\n{text}\n"
 
-    return f"{system}\n{evidence_text}\n\nUSER QUESTION: {query}"
+    # Inject analysis context for complex queries
+    analysis_text = _load_analysis_context(query)
+
+    return f"{system}\n{evidence_text}{analysis_text}\n\nUSER QUESTION: {query}"
 
 
 def ask(

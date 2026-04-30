@@ -25,6 +25,7 @@ RAW_SST_DIR    = RAW_DIR / "sst"       # symlink or copy from onagawa_sst_subset
 NORMALIZED_DIR = DATA_DIR / "normalized"
 CANONICAL_DIR  = DATA_DIR / "canonical"
 SERVING_DIR    = DATA_DIR / "serving"
+ANALYSIS_DIR   = DATA_DIR / "analysis"
 PROVENANCE_DIR = DATA_DIR / "provenance"
 
 # Satellite SST source (NetCDF subset files)

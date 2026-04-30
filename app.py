@@ -178,8 +178,9 @@ retriever = get_retriever()
 st.title("🌊 Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
-tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_db, tab_stats = st.tabs(
-    ["💬 Chat", "📋 Evidence Explorer", "🌡️ CTD Profiles", "🧬 Taxa", "🛰️ SST", "🗄️ Database", "📊 Stats"]
+tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_analysis, tab_db, tab_stats = st.tabs(
+    ["💬 Chat", "📋 Evidence Explorer", "🌡️ CTD Profiles", "🧬 Taxa", "🛰️ SST",
+     "🔬 Pre-Analysis", "🗄️ Database", "📊 Stats"]
 )
 
 
@@ -498,6 +499,297 @@ with tab_stats:
         st.metric("Registered files", prov_count)
     else:
         st.caption("No provenance registry found.")
+
+
+# ═══════════════════════════════════════════
+# TAB: Pre-Analysis
+# ═══════════════════════════════════════════
+with tab_analysis:
+    st.subheader("🔬 Pre-Analysis")
+    st.caption("Precomputed ecological relationships across CTD, metagenome, and SST data.")
+
+    # Load analysis data
+    _analysis_dir = config.ANALYSIS_DIR
+    _has_analysis = _analysis_dir.exists() and any(_analysis_dir.glob("*.parquet"))
+
+    if not _has_analysis:
+        st.warning("No pre-analysis data found. Run `python scripts/run_pre_analysis.py` to compute.")
+    else:
+        pa_tab1, pa_tab2, pa_tab3, pa_tab4 = st.tabs(
+            ["📈 CTD Trends", "🔗 Correlations", "🌀 Diversity", "🕸️ Co-occurrence"]
+        )
+
+        # ── Sub-tab 1: CTD Trends ──
+        with pa_tab1:
+            trends_path = _analysis_dir / "ctd_monthly_trends.parquet"
+            if trends_path.exists():
+                trends_df = pd.read_parquet(trends_path)
+
+                st.markdown("### Monthly CTD variable trends by bay")
+
+                # Variable selector
+                trend_vars = [
+                    ("mean_temperature", "Temperature (°C)", "#e74c3c"),
+                    ("mean_salinity", "Salinity (PSU)", "#3498db"),
+                    ("mean_do_percent", "Dissolved Oxygen (%)", "#2ecc71"),
+                    ("mean_chl_a", "Chlorophyll-a (μg/L)", "#27ae60"),
+                    ("mean_turbidity", "Turbidity", "#95a5a6"),
+                ]
+
+                sel_var = st.selectbox(
+                    "Variable",
+                    [v[1] for v in trend_vars],
+                    key="pa_trend_var",
+                )
+                var_key = [v[0] for v in trend_vars if v[1] == sel_var][0]
+                var_color = [v[2] for v in trend_vars if v[1] == sel_var][0]
+
+                mean_col = f"{var_key}_mean"
+                std_col = f"{var_key}_std"
+
+                if mean_col in trends_df.columns:
+                    import matplotlib.pyplot as plt
+
+                    fig, ax = plt.subplots(figsize=(12, 4.5))
+                    fig.patch.set_facecolor("#0e1117")
+                    ax.set_facecolor("#0e1117")
+
+                    for bay in sorted(trends_df["bay"].dropna().unique()):
+                        bd = trends_df[trends_df["bay"] == bay].sort_values("year_month")
+                        x = range(len(bd))
+                        y = bd[mean_col].values
+                        yerr = bd[std_col].values if std_col in bd.columns else None
+
+                        bay_label = {"O": "Onagawa", "I": "Ishinomaki", "M": "Matsushima"}.get(bay, bay)
+                        ax.plot(x, y, "o-", label=bay_label, markersize=5)
+                        if yerr is not None:
+                            ax.fill_between(x, y - yerr, y + yerr, alpha=0.15)
+
+                        ax.set_xticks(range(len(bd)))
+                        ax.set_xticklabels(bd["year_month"].values, rotation=45, ha="right",
+                                           fontsize=8, color="#aaa")
+
+                    ax.set_ylabel(sel_var, color="#ddd", fontsize=11)
+                    ax.set_xlabel("Month", color="#ddd", fontsize=11)
+                    ax.legend(fontsize=9, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
+                    ax.tick_params(colors="#aaa")
+                    for spine in ax.spines.values():
+                        spine.set_color("#333")
+                    ax.grid(True, alpha=0.15)
+
+                    st.pyplot(fig, width="stretch")
+                    plt.close(fig)
+
+                    # Stratification index
+                    if "strat_index_mean" in trends_df.columns:
+                        with st.expander("🌡️ Thermal Stratification Index", expanded=False):
+                            st.caption("Surface T − Bottom T: positive = stratified, ~0 = mixed")
+                            strat = trends_df.dropna(subset=["strat_index_mean"]).sort_values("year_month")
+                            fig2, ax2 = plt.subplots(figsize=(12, 3))
+                            fig2.patch.set_facecolor("#0e1117")
+                            ax2.set_facecolor("#0e1117")
+
+                            for bay in sorted(strat["bay"].dropna().unique()):
+                                bs = strat[strat["bay"] == bay]
+                                ax2.bar(range(len(bs)), bs["strat_index_mean"].values,
+                                        alpha=0.7, label={"O": "Onagawa", "I": "Ishinomaki", "M": "Matsushima"}.get(bay, bay))
+                                ax2.set_xticks(range(len(bs)))
+                                ax2.set_xticklabels(bs["year_month"].values, rotation=45, ha="right",
+                                                    fontsize=7, color="#aaa")
+
+                            ax2.axhline(0, color="#555", linewidth=0.8)
+                            ax2.set_ylabel("ΔT (°C)", color="#ddd", fontsize=10)
+                            ax2.legend(fontsize=8, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
+                            ax2.tick_params(colors="#aaa")
+                            for spine in ax2.spines.values():
+                                spine.set_color("#333")
+
+                            st.pyplot(fig2, width="stretch")
+                            plt.close(fig2)
+
+                    # Data table
+                    with st.expander("📋 Raw trend data"):
+                        st.dataframe(trends_df, width="stretch", height=300)
+            else:
+                st.info("No CTD trend data available.")
+
+        # ── Sub-tab 2: Correlations ──
+        with pa_tab2:
+            corr_path = _analysis_dir / "taxa_env_correlations.parquet"
+            if corr_path.exists():
+                corr_df = pd.read_parquet(corr_path)
+
+                st.markdown("### Taxa–Environment Correlations (Spearman)")
+
+                # Summary metrics
+                n_sig = corr_df[corr_df["significant"]].shape[0]
+                n_total = len(corr_df)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total pairs tested", n_total)
+                c2.metric("Significant (p<0.05)", n_sig)
+                c3.metric("% Significant", f"{n_sig/n_total*100:.0f}%" if n_total > 0 else "–")
+
+                # Heatmap
+                import matplotlib.pyplot as plt
+
+                pivot = corr_df.pivot_table(
+                    index="genus", columns="env_variable",
+                    values="spearman_rho", aggfunc="first"
+                )
+                # Clean up column names for display
+                pivot.columns = [c.replace("mean_", "") for c in pivot.columns]
+
+                fig, ax = plt.subplots(figsize=(10, max(6, len(pivot) * 0.35)))
+                fig.patch.set_facecolor("#0e1117")
+                ax.set_facecolor("#0e1117")
+
+                im = ax.imshow(pivot.values, cmap="RdBu_r", aspect="auto", vmin=-1, vmax=1)
+                ax.set_xticks(range(len(pivot.columns)))
+                ax.set_xticklabels(pivot.columns, rotation=45, ha="right", color="#ddd", fontsize=10)
+                ax.set_yticks(range(len(pivot.index)))
+                ax.set_yticklabels(pivot.index, color="#ddd", fontsize=9)
+
+                # Annotate cells
+                sig_pivot = corr_df.pivot_table(
+                    index="genus", columns="env_variable",
+                    values="significant", aggfunc="first"
+                )
+                for i in range(len(pivot.index)):
+                    for j in range(len(pivot.columns)):
+                        val = pivot.iloc[i, j]
+                        if pd.notna(val):
+                            genus = pivot.index[i]
+                            env = corr_df["env_variable"].unique()[j] if j < len(corr_df["env_variable"].unique()) else ""
+                            is_sig = sig_pivot.iloc[i, j] if i < len(sig_pivot) and j < len(sig_pivot.columns) else False
+                            txt = f"{val:.2f}"
+                            if is_sig:
+                                txt += "*"
+                            color = "white" if abs(val) > 0.5 else "#ccc"
+                            ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=color)
+
+                cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+                cbar.ax.tick_params(colors="#aaa")
+                cbar.set_label("Spearman ρ", color="#ddd")
+                ax.set_title("Taxa × Environment Correlation Heatmap", color="#ddd", fontsize=13, pad=12)
+
+                st.pyplot(fig, width="stretch")
+                plt.close(fig)
+
+                st.caption("* = p < 0.05. Positive ρ = genus abundance increases with variable.")
+
+                # Significant correlations table
+                with st.expander("📋 Significant correlations (p<0.05)"):
+                    sig = corr_df[corr_df["significant"]].sort_values("p_value")
+                    st.dataframe(sig, width="stretch", hide_index=True)
+            else:
+                st.info("No correlation data. Run `python scripts/run_pre_analysis.py`.")
+
+        # ── Sub-tab 3: Diversity ──
+        with pa_tab3:
+            div_path = _analysis_dir / "diversity_indices.parquet"
+            if div_path.exists():
+                div_df = pd.read_parquet(div_path)
+
+                st.markdown("### Community Diversity Indices")
+
+                # Source selector
+                div_source = st.selectbox("Method", div_df["source"].unique().tolist(), key="pa_div_src")
+                sd = div_df[div_df["source"] == div_source].copy()
+
+                # Summary metrics
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                mc1.metric("Samples", len(sd))
+                mc2.metric("Mean Shannon H'", f"{sd['shannon_h'].mean():.3f}")
+                mc3.metric("Mean Simpson", f"{sd['simpson_1d'].mean():.4f}")
+                mc4.metric("Mean Richness", f"{sd['richness'].mean():.0f}")
+
+                # Shannon diversity over time
+                import matplotlib.pyplot as plt
+
+                sd_sorted = sd.sort_values("year_month")
+
+                fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+                fig.patch.set_facecolor("#0e1117")
+
+                for ax_i, (metric, label, color) in enumerate([
+                    ("shannon_h", "Shannon H'", "#e74c3c"),
+                    ("richness", "Genus Richness", "#3498db"),
+                ]):
+                    ax = axes[ax_i]
+                    ax.set_facecolor("#0e1117")
+
+                    for bay in sorted(sd_sorted["bay"].dropna().unique()):
+                        bsd = sd_sorted[sd_sorted["bay"] == bay]
+                        bay_label = {"O": "Onagawa", "I": "Ishinomaki", "M": "Matsushima"}.get(bay, bay)
+                        ax.scatter(range(len(bsd)), bsd[metric].values, s=20, label=bay_label, alpha=0.7)
+
+                    ax.set_ylabel(label, color="#ddd", fontsize=11)
+                    ax.set_xlabel("Sample", color="#ddd", fontsize=10)
+                    ax.legend(fontsize=8, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
+                    ax.tick_params(colors="#aaa")
+                    ax.grid(True, alpha=0.15)
+                    for spine in ax.spines.values():
+                        spine.set_color("#333")
+
+                fig.tight_layout()
+                st.pyplot(fig, width="stretch")
+                plt.close(fig)
+
+                # Data table
+                with st.expander("📋 Full diversity data"):
+                    st.dataframe(sd, width="stretch", height=300, hide_index=True)
+            else:
+                st.info("No diversity data. Run `python scripts/run_pre_analysis.py`.")
+
+        # ── Sub-tab 4: Co-occurrence ──
+        with pa_tab4:
+            cooc_path = _analysis_dir / "taxa_cooccurrence.parquet"
+            if cooc_path.exists():
+                cooc_df = pd.read_parquet(cooc_path)
+
+                st.markdown("### Taxa Co-occurrence (Jaccard Similarity)")
+                st.caption("Jaccard index: proportion of samples where both genera are present. 1.0 = always co-occur, 0.0 = never.")
+
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots(figsize=(12, 10))
+                fig.patch.set_facecolor("#0e1117")
+                ax.set_facecolor("#0e1117")
+
+                # Mask diagonal for cleaner viz
+                vals = cooc_df.values.copy()
+                np.fill_diagonal(vals, np.nan)
+
+                im = ax.imshow(vals, cmap="YlOrRd", aspect="auto", vmin=0, vmax=1)
+                ax.set_xticks(range(len(cooc_df.columns)))
+                ax.set_xticklabels(cooc_df.columns, rotation=90, fontsize=8, color="#ddd")
+                ax.set_yticks(range(len(cooc_df.index)))
+                ax.set_yticklabels(cooc_df.index, fontsize=8, color="#ddd")
+
+                cbar = fig.colorbar(im, ax=ax, shrink=0.7)
+                cbar.ax.tick_params(colors="#aaa")
+                cbar.set_label("Jaccard Index", color="#ddd")
+                ax.set_title("Genus Co-occurrence Heatmap (Top 30)", color="#ddd", fontsize=13, pad=12)
+
+                fig.tight_layout()
+                st.pyplot(fig, width="stretch")
+                plt.close(fig)
+
+                # Top co-occurring pairs
+                with st.expander("🔗 Top co-occurring pairs"):
+                    pairs = []
+                    genera = cooc_df.index.tolist()
+                    for i in range(len(genera)):
+                        for j in range(i + 1, len(genera)):
+                            pairs.append({
+                                "Genus A": genera[i],
+                                "Genus B": genera[j],
+                                "Jaccard": round(cooc_df.iloc[i, j], 4),
+                            })
+                    pairs_df = pd.DataFrame(pairs).sort_values("Jaccard", ascending=False).head(20)
+                    st.dataframe(pairs_df, width="stretch", hide_index=True)
+            else:
+                st.info("No co-occurrence data. Run `python scripts/run_pre_analysis.py`.")
 
 
 # ═══════════════════════════════════════════
