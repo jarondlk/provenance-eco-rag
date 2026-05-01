@@ -551,8 +551,6 @@ with tab_analysis:
                     import matplotlib.pyplot as plt
 
                     fig, ax = plt.subplots(figsize=(12, 4.5))
-                    fig.patch.set_facecolor("#0e1117")
-                    ax.set_facecolor("#0e1117")
 
                     for bay in sorted(trends_df["bay"].dropna().unique()):
                         bd = trends_df[trends_df["bay"] == bay].sort_values("year_month")
@@ -567,16 +565,14 @@ with tab_analysis:
 
                         ax.set_xticks(range(len(bd)))
                         ax.set_xticklabels(bd["year_month"].values, rotation=45, ha="right",
-                                           fontsize=8, color="#aaa")
+                                           fontsize=8)
 
-                    ax.set_ylabel(sel_var, color="#ddd", fontsize=11)
-                    ax.set_xlabel("Month", color="#ddd", fontsize=11)
-                    ax.legend(fontsize=9, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
-                    ax.tick_params(colors="#aaa")
-                    for spine in ax.spines.values():
-                        spine.set_color("#333")
-                    ax.grid(True, alpha=0.15)
+                    ax.set_ylabel(sel_var, fontsize=11)
+                    ax.set_xlabel("Month", fontsize=11)
+                    ax.legend(fontsize=9)
+                    ax.grid(True, alpha=0.3)
 
+                    fig.tight_layout()
                     st.pyplot(fig, width="stretch")
                     plt.close(fig)
 
@@ -586,8 +582,6 @@ with tab_analysis:
                             st.caption("Surface T − Bottom T: positive = stratified, ~0 = mixed")
                             strat = trends_df.dropna(subset=["strat_index_mean"]).sort_values("year_month")
                             fig2, ax2 = plt.subplots(figsize=(12, 3))
-                            fig2.patch.set_facecolor("#0e1117")
-                            ax2.set_facecolor("#0e1117")
 
                             for bay in sorted(strat["bay"].dropna().unique()):
                                 bs = strat[strat["bay"] == bay]
@@ -595,15 +589,13 @@ with tab_analysis:
                                         alpha=0.7, label={"O": "Onagawa", "I": "Ishinomaki", "M": "Matsushima"}.get(bay, bay))
                                 ax2.set_xticks(range(len(bs)))
                                 ax2.set_xticklabels(bs["year_month"].values, rotation=45, ha="right",
-                                                    fontsize=7, color="#aaa")
+                                                    fontsize=7)
 
-                            ax2.axhline(0, color="#555", linewidth=0.8)
-                            ax2.set_ylabel("ΔT (°C)", color="#ddd", fontsize=10)
-                            ax2.legend(fontsize=8, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
-                            ax2.tick_params(colors="#aaa")
-                            for spine in ax2.spines.values():
-                                spine.set_color("#333")
+                            ax2.axhline(0, color="#888", linewidth=0.8)
+                            ax2.set_ylabel("ΔT (°C)", fontsize=10)
+                            ax2.legend(fontsize=8)
 
+                            fig2.tight_layout()
                             st.pyplot(fig2, width="stretch")
                             plt.close(fig2)
 
@@ -640,14 +632,12 @@ with tab_analysis:
                 pivot.columns = [c.replace("mean_", "") for c in pivot.columns]
 
                 fig, ax = plt.subplots(figsize=(10, max(6, len(pivot) * 0.35)))
-                fig.patch.set_facecolor("#0e1117")
-                ax.set_facecolor("#0e1117")
 
                 im = ax.imshow(pivot.values, cmap="RdBu_r", aspect="auto", vmin=-1, vmax=1)
                 ax.set_xticks(range(len(pivot.columns)))
-                ax.set_xticklabels(pivot.columns, rotation=45, ha="right", color="#ddd", fontsize=10)
+                ax.set_xticklabels(pivot.columns, rotation=45, ha="right", fontsize=10)
                 ax.set_yticks(range(len(pivot.index)))
-                ax.set_yticklabels(pivot.index, color="#ddd", fontsize=9)
+                ax.set_yticklabels(pivot.index, fontsize=9)
 
                 # Annotate cells
                 sig_pivot = corr_df.pivot_table(
@@ -664,14 +654,14 @@ with tab_analysis:
                             txt = f"{val:.2f}"
                             if is_sig:
                                 txt += "*"
-                            color = "white" if abs(val) > 0.5 else "#ccc"
+                            color = "white" if abs(val) > 0.5 else "black"
                             ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=color)
 
                 cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-                cbar.ax.tick_params(colors="#aaa")
-                cbar.set_label("Spearman ρ", color="#ddd")
-                ax.set_title("Taxa × Environment Correlation Heatmap", color="#ddd", fontsize=13, pad=12)
+                cbar.set_label("Spearman ρ")
+                ax.set_title("Taxa × Environment Correlation Heatmap", fontsize=13, pad=12)
 
+                fig.tight_layout()
                 st.pyplot(fig, width="stretch")
                 plt.close(fig)
 
@@ -709,27 +699,22 @@ with tab_analysis:
                 sd_sorted = sd.sort_values("year_month")
 
                 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-                fig.patch.set_facecolor("#0e1117")
 
                 for ax_i, (metric, label, color) in enumerate([
                     ("shannon_h", "Shannon H'", "#e74c3c"),
                     ("richness", "Genus Richness", "#3498db"),
                 ]):
                     ax = axes[ax_i]
-                    ax.set_facecolor("#0e1117")
 
                     for bay in sorted(sd_sorted["bay"].dropna().unique()):
                         bsd = sd_sorted[sd_sorted["bay"] == bay]
                         bay_label = {"O": "Onagawa", "I": "Ishinomaki", "M": "Matsushima"}.get(bay, bay)
                         ax.scatter(range(len(bsd)), bsd[metric].values, s=20, label=bay_label, alpha=0.7)
 
-                    ax.set_ylabel(label, color="#ddd", fontsize=11)
-                    ax.set_xlabel("Sample", color="#ddd", fontsize=10)
-                    ax.legend(fontsize=8, facecolor="#1a1a2e", edgecolor="#333", labelcolor="#ddd")
-                    ax.tick_params(colors="#aaa")
-                    ax.grid(True, alpha=0.15)
-                    for spine in ax.spines.values():
-                        spine.set_color("#333")
+                    ax.set_ylabel(label, fontsize=11)
+                    ax.set_xlabel("Sample", fontsize=10)
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
 
                 fig.tight_layout()
                 st.pyplot(fig, width="stretch")
@@ -753,8 +738,6 @@ with tab_analysis:
                 import matplotlib.pyplot as plt
 
                 fig, ax = plt.subplots(figsize=(12, 10))
-                fig.patch.set_facecolor("#0e1117")
-                ax.set_facecolor("#0e1117")
 
                 # Mask diagonal for cleaner viz
                 vals = cooc_df.values.copy()
@@ -762,14 +745,13 @@ with tab_analysis:
 
                 im = ax.imshow(vals, cmap="YlOrRd", aspect="auto", vmin=0, vmax=1)
                 ax.set_xticks(range(len(cooc_df.columns)))
-                ax.set_xticklabels(cooc_df.columns, rotation=90, fontsize=8, color="#ddd")
+                ax.set_xticklabels(cooc_df.columns, rotation=90, fontsize=8)
                 ax.set_yticks(range(len(cooc_df.index)))
-                ax.set_yticklabels(cooc_df.index, fontsize=8, color="#ddd")
+                ax.set_yticklabels(cooc_df.index, fontsize=8)
 
                 cbar = fig.colorbar(im, ax=ax, shrink=0.7)
-                cbar.ax.tick_params(colors="#aaa")
-                cbar.set_label("Jaccard Index", color="#ddd")
-                ax.set_title("Genus Co-occurrence Heatmap (Top 30)", color="#ddd", fontsize=13, pad=12)
+                cbar.set_label("Jaccard Index")
+                ax.set_title("Genus Co-occurrence Heatmap (Top 30)", fontsize=13, pad=12)
 
                 fig.tight_layout()
                 st.pyplot(fig, width="stretch")
