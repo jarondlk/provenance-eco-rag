@@ -95,6 +95,23 @@ The application provides a multi-tab interface:
 * **Database**: Read-only SQL console and schema inspector.
 * **Stats**: Corpus metrics and provenance tracking.
 
+### Application Screenshots
+
+![Overview Tab](docs/screenshots/overview_tab.png)
+*System Overview tab showing the high-level metrics and configuration sidebar.*
+
+![Data (CTD) Tab](docs/screenshots/data_ctd_tab.png)
+*Data tab showing interactive depth profiles for CTD measurements.*
+
+![Pre-Analysis Tab](docs/screenshots/pre_analysis_tab.png)
+*Pre-Analysis tab showing precomputed ecological relationships and taxa-environment correlations.*
+
+![Database Explorer Tab](docs/screenshots/database_tab.png)
+*Database tab allowing inspection of the underlying relational tables.*
+
+![Stats Tab](docs/screenshots/stats_tab.png)
+*Stats tab detailing corpus statistics and data sample coverage.*
+
 ## Retrieval System Details
 
 The hybrid retrieval system merges vector search (cosine similarity via pgvector) and full-text search (tsvector via PostgreSQL) using Reciprocal Rank Fusion (RRF). 
