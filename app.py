@@ -178,8 +178,8 @@ retriever = get_retriever()
 st.title("Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
-tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_analysis, tab_db, tab_stats = st.tabs(
-    ["Chat", "Evidence Explorer", "CTD Profiles", "Taxa", "SST",
+tab_chat, tab_explore, tab_data, tab_analysis, tab_db, tab_stats = st.tabs(
+    ["Chat", "Evidence Explorer", "Data",
      "Pre-Analysis", "Database", "Stats"]
 )
 
@@ -302,167 +302,167 @@ with tab_explore:
 
 
 # ═══════════════════════════════════════════
-# TAB: CTD Profiles
+# TAB: Data (CTD + Taxa + SST)
 # ═══════════════════════════════════════════
-with tab_ctd:
-    st.subheader("CTD Depth Profiles")
-    if ctd_profiles.empty:
-        st.warning("No CTD profile data available.")
-    else:
-        samples = sorted(ctd_profiles["sample_id"].dropna().unique())
-        selected = st.selectbox("Select sample", samples, index=0)
-        prof = ctd_profiles[ctd_profiles["sample_id"] == selected].sort_values("depth_m")
+with tab_data:
+    st.subheader("Data")
+    st.caption("Browse CTD profiles, metagenome taxonomy, and satellite SST observations.")
 
-        if not prof.empty:
-            vars_available = [c for c in ["temperature", "salinity", "do_percent", "chl_a",
-                                           "turbidity", "sigma_t"] if c in prof.columns]
-            selected_vars = st.multiselect("Variables", vars_available,
-                                            default=vars_available[:3])
-            if selected_vars:
-                fig, axes = plt.subplots(1, len(selected_vars),
-                                          figsize=(4 * len(selected_vars), 6), sharey=True)
-                if len(selected_vars) == 1:
-                    axes = [axes]
-                for ax, var in zip(axes, selected_vars):
-                    vals = pd.to_numeric(prof[var], errors="coerce")
-                    ax.plot(vals, prof["depth_m"], "o-", markersize=3)
-                    ax.set_xlabel(var)
-                    ax.invert_yaxis()
-                    if ax == axes[0]:
-                        ax.set_ylabel("Depth (m)")
-                    ax.grid(True, alpha=0.3)
-                fig.suptitle(f"CTD Profile: {selected}", fontsize=14)
-                fig.tight_layout()
-                st.pyplot(fig, clear_figure=True)
+    data_tab_ctd, data_tab_taxa, data_tab_sst = st.tabs(
+        ["CTD Profiles", "Taxa", "SST"]
+    )
 
-            # Summary stats
-            if not ctd_summary.empty:
-                row = ctd_summary[ctd_summary["sample_id"] == selected]
-                if not row.empty:
-                    r = row.iloc[0]
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Depth points", int(r.get("n_depth_points", 0)))
-                    c2.metric("Surface T", f"{_fmt(r.get('surface_temperature'))}°C")
-                    c3.metric("Bottom T", f"{_fmt(r.get('bottom_temperature'))}°C")
-                    c4.metric("Mean Sal", f"{_fmt(r.get('mean_salinity'))} PSU")
-
-
-# ═══════════════════════════════════════════
-# TAB: Taxa
-# ═══════════════════════════════════════════
-with tab_taxa:
-    st.subheader("Taxonomic Composition")
-    if sample_ctx.empty:
-        st.warning("No metagenome data available.")
-    else:
-        meta_samples = sample_ctx[sample_ctx["has_kraken"] == True]["sample_id"].dropna().unique()
-        meta_samples = sorted(meta_samples)
-        if meta_samples:
-            sel_sample = st.selectbox("Select metagenome sample", meta_samples, key="taxa_sample")
-            row = sample_ctx[sample_ctx["sample_id"] == sel_sample].iloc[0]
-
-            col_kr, col_me = st.columns(2)
-
-            # Kraken top genera
-            with col_kr:
-                st.markdown("**Kraken top genera**")
-                kr_json = row.get("top_genus_10_json_x")
-                if pd.notna(kr_json) and isinstance(kr_json, str):
-                    try:
-                        taxa = json.loads(kr_json)
-                        if taxa:
-                            names = [t["genus"] for t in taxa]
-                            vals = [t["abundance_value"] for t in taxa]
-                            fig, ax = plt.subplots(figsize=(6, 4))
-                            ax.barh(names[::-1], vals[::-1], color="#2196F3")
-                            ax.set_xlabel("Abundance (%)")
-                            ax.set_title(f"Kraken – {sel_sample}")
-                            fig.tight_layout()
-                            st.pyplot(fig, clear_figure=True)
-                    except Exception:
-                        st.caption("Could not parse Kraken data")
-
-            # MetaEuk top genera
-            with col_me:
-                st.markdown("**MetaEuk top genera**")
-                me_json = row.get("top_genus_10_json_y")
-                if pd.notna(me_json) and isinstance(me_json, str):
-                    try:
-                        taxa = json.loads(me_json)
-                        if taxa:
-                            names = [t["genus"] for t in taxa]
-                            vals = [t["abundance_value"] for t in taxa]
-                            fig, ax = plt.subplots(figsize=(6, 4))
-                            ax.barh(names[::-1], vals[::-1], color="#4CAF50")
-                            ax.set_xlabel("Abundance (%)")
-                            ax.set_title(f"MetaEuk – {sel_sample}")
-                            fig.tight_layout()
-                            st.pyplot(fig, clear_figure=True)
-                    except Exception:
-                        st.caption("Could not parse MetaEuk data")
-
-            # Upper groups
-            ug_json = row.get("top_upper_group_10_json")
-            if pd.notna(ug_json) and isinstance(ug_json, str):
-                try:
-                    groups = json.loads(ug_json)
-                    if groups:
-                        st.markdown("**Dominant taxonomic groups**")
-                        names = [g["upper_group"] for g in groups]
-                        vals = [g["abundance_value"] for g in groups]
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        ax.barh(names[::-1], vals[::-1], color="#FF9800")
-                        ax.set_xlabel("Abundance (%)")
-                        ax.set_title(f"Upper groups – {sel_sample}")
-                        fig.tight_layout()
-                        st.pyplot(fig, clear_figure=True)
-                except Exception:
-                    pass
+    # ── Sub-tab: CTD Profiles ──
+    with data_tab_ctd:
+        if ctd_profiles.empty:
+            st.warning("No CTD profile data available.")
         else:
-            st.info("No metagenome samples found.")
+            samples = sorted(ctd_profiles["sample_id"].dropna().unique())
+            selected = st.selectbox("Select sample", samples, index=0)
+            prof = ctd_profiles[ctd_profiles["sample_id"] == selected].sort_values("depth_m")
 
+            if not prof.empty:
+                vars_available = [c for c in ["temperature", "salinity", "do_percent", "chl_a",
+                                               "turbidity", "sigma_t"] if c in prof.columns]
+                selected_vars = st.multiselect("Variables", vars_available,
+                                                default=vars_available[:3])
+                if selected_vars:
+                    fig, axes = plt.subplots(1, len(selected_vars),
+                                              figsize=(4 * len(selected_vars), 6), sharey=True)
+                    if len(selected_vars) == 1:
+                        axes = [axes]
+                    for ax, var in zip(axes, selected_vars):
+                        vals = pd.to_numeric(prof[var], errors="coerce")
+                        ax.plot(vals, prof["depth_m"], "o-", markersize=3)
+                        ax.set_xlabel(var)
+                        ax.invert_yaxis()
+                        if ax == axes[0]:
+                            ax.set_ylabel("Depth (m)")
+                        ax.grid(True, alpha=0.3)
+                    fig.suptitle(f"CTD Profile: {selected}", fontsize=14)
+                    fig.tight_layout()
+                    st.pyplot(fig, clear_figure=True)
 
-# ═══════════════════════════════════════════
-# TAB: SST
-# ═══════════════════════════════════════════
-with tab_sst:
-    st.subheader("Satellite SST")
-    if sst_ts.empty:
-        st.warning("No SST data. Run `python scripts/ingest.py` to process SST files.")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Observations", len(sst_ts))
-        c2.metric("Min SST", f"{sst_ts['sst'].min():.1f}°C")
-        c3.metric("Max SST", f"{sst_ts['sst'].max():.1f}°C")
-        c4.metric("Mean SST", f"{sst_ts['sst'].mean():.1f}°C")
+                # Summary stats
+                if not ctd_summary.empty:
+                    row = ctd_summary[ctd_summary["sample_id"] == selected]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Depth points", int(r.get("n_depth_points", 0)))
+                        c2.metric("Surface T", f"{_fmt(r.get('surface_temperature'))}°C")
+                        c3.metric("Bottom T", f"{_fmt(r.get('bottom_temperature'))}°C")
+                        c4.metric("Mean Sal", f"{_fmt(r.get('mean_salinity'))} PSU")
 
-        st.markdown("### Point SST time series")
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.plot(sst_ts["time_jst"], sst_ts["sst"], linewidth=0.8, color="#1976D2")
-        ax.set_xlabel("Time (JST)")
-        ax.set_ylabel("SST (°C)")
-        ax.set_title(f"Onagawa monitoring point ({config.ONAGAWA_LAT:.4f}°N, {config.ONAGAWA_LON:.4f}°E)")
-        ax.grid(True, alpha=0.3)
-        fig.autofmt_xdate()
-        fig.tight_layout()
-        st.pyplot(fig, clear_figure=True)
+    # ── Sub-tab: Taxa ──
+    with data_tab_taxa:
+        if sample_ctx.empty:
+            st.warning("No metagenome data available.")
+        else:
+            meta_samples = sample_ctx[sample_ctx["has_kraken"] == True]["sample_id"].dropna().unique()
+            meta_samples = sorted(meta_samples)
+            if meta_samples:
+                sel_sample = st.selectbox("Select metagenome sample", meta_samples, key="taxa_sample")
+                row = sample_ctx[sample_ctx["sample_id"] == sel_sample].iloc[0]
 
-        if not sst_daily.empty:
-            st.markdown("### Daily regional summary")
-            fig2, ax2 = plt.subplots(figsize=(12, 4))
-            ax2.fill_between(pd.to_datetime(sst_daily["date_jst"]),
-                             sst_daily["min_sst"], sst_daily["max_sst"],
-                             alpha=0.2, color="#1976D2", label="min–max range")
-            ax2.plot(pd.to_datetime(sst_daily["date_jst"]),
-                     sst_daily["mean_sst"], color="#1976D2", linewidth=1.5, label="mean")
-            ax2.set_xlabel("Date")
-            ax2.set_ylabel("SST (°C)")
-            ax2.set_title("Regional SST daily summary")
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
-            fig2.autofmt_xdate()
-            fig2.tight_layout()
-            st.pyplot(fig2, clear_figure=True)
+                col_kr, col_me = st.columns(2)
+
+                # Kraken top genera
+                with col_kr:
+                    st.markdown("**Kraken top genera**")
+                    kr_json = row.get("top_genus_10_json_x")
+                    if pd.notna(kr_json) and isinstance(kr_json, str):
+                        try:
+                            taxa = json.loads(kr_json)
+                            if taxa:
+                                names = [t["genus"] for t in taxa]
+                                vals = [t["abundance_value"] for t in taxa]
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                ax.barh(names[::-1], vals[::-1], color="#2196F3")
+                                ax.set_xlabel("Abundance (%)")
+                                ax.set_title(f"Kraken – {sel_sample}")
+                                fig.tight_layout()
+                                st.pyplot(fig, clear_figure=True)
+                        except Exception:
+                            st.caption("Could not parse Kraken data")
+
+                # MetaEuk top genera
+                with col_me:
+                    st.markdown("**MetaEuk top genera**")
+                    me_json = row.get("top_genus_10_json_y")
+                    if pd.notna(me_json) and isinstance(me_json, str):
+                        try:
+                            taxa = json.loads(me_json)
+                            if taxa:
+                                names = [t["genus"] for t in taxa]
+                                vals = [t["abundance_value"] for t in taxa]
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                ax.barh(names[::-1], vals[::-1], color="#4CAF50")
+                                ax.set_xlabel("Abundance (%)")
+                                ax.set_title(f"MetaEuk – {sel_sample}")
+                                fig.tight_layout()
+                                st.pyplot(fig, clear_figure=True)
+                        except Exception:
+                            st.caption("Could not parse MetaEuk data")
+
+                # Upper groups
+                ug_json = row.get("top_upper_group_10_json")
+                if pd.notna(ug_json) and isinstance(ug_json, str):
+                    try:
+                        groups = json.loads(ug_json)
+                        if groups:
+                            st.markdown("**Dominant taxonomic groups**")
+                            names = [g["upper_group"] for g in groups]
+                            vals = [g["abundance_value"] for g in groups]
+                            fig, ax = plt.subplots(figsize=(8, 4))
+                            ax.barh(names[::-1], vals[::-1], color="#FF9800")
+                            ax.set_xlabel("Abundance (%)")
+                            ax.set_title(f"Upper groups – {sel_sample}")
+                            fig.tight_layout()
+                            st.pyplot(fig, clear_figure=True)
+                    except Exception:
+                        pass
+            else:
+                st.info("No metagenome samples found.")
+
+    # ── Sub-tab: SST ──
+    with data_tab_sst:
+        if sst_ts.empty:
+            st.warning("No SST data. Run `python scripts/ingest.py` to process SST files.")
+        else:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Observations", len(sst_ts))
+            c2.metric("Min SST", f"{sst_ts['sst'].min():.1f}°C")
+            c3.metric("Max SST", f"{sst_ts['sst'].max():.1f}°C")
+            c4.metric("Mean SST", f"{sst_ts['sst'].mean():.1f}°C")
+
+            st.markdown("### Point SST time series")
+            fig, ax = plt.subplots(figsize=(12, 4))
+            ax.plot(sst_ts["time_jst"], sst_ts["sst"], linewidth=0.8, color="#1976D2")
+            ax.set_xlabel("Time (JST)")
+            ax.set_ylabel("SST (°C)")
+            ax.set_title(f"Onagawa monitoring point ({config.ONAGAWA_LAT:.4f}°N, {config.ONAGAWA_LON:.4f}°E)")
+            ax.grid(True, alpha=0.3)
+            fig.autofmt_xdate()
+            fig.tight_layout()
+            st.pyplot(fig, clear_figure=True)
+
+            if not sst_daily.empty:
+                st.markdown("### Daily regional summary")
+                fig2, ax2 = plt.subplots(figsize=(12, 4))
+                ax2.fill_between(pd.to_datetime(sst_daily["date_jst"]),
+                                 sst_daily["min_sst"], sst_daily["max_sst"],
+                                 alpha=0.2, color="#1976D2", label="min-max range")
+                ax2.plot(pd.to_datetime(sst_daily["date_jst"]),
+                         sst_daily["mean_sst"], color="#1976D2", linewidth=1.5, label="mean")
+                ax2.set_xlabel("Date")
+                ax2.set_ylabel("SST (°C)")
+                ax2.set_title("Regional SST daily summary")
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+                fig2.autofmt_xdate()
+                fig2.tight_layout()
+                st.pyplot(fig2, clear_figure=True)
 
 
 # ═══════════════════════════════════════════
