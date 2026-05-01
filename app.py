@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 
 # ── Page config ──
-st.set_page_config(page_title="Onagawa Source Chat", layout="wide", page_icon="🌊")
+st.set_page_config(page_title="Onagawa Source Chat", layout="wide", page_icon="")
 
 # ── Session state ──
 for k, v in [("messages", []), ("pending_prompt", None), ("retriever", None)]:
@@ -101,7 +101,7 @@ def get_retriever():
 # ═══════════════════════════════════════════
 # Sidebar
 # ═══════════════════════════════════════════
-st.sidebar.header("⚙️ Settings")
+st.sidebar.header("Settings")
 
 ollama_url = st.sidebar.text_input(
     "Ollama URL", value=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -118,7 +118,7 @@ try:
 except Exception:
     model_names = []
 
-with st.sidebar.expander("🤖 Model", expanded=True):
+with st.sidebar.expander("Model", expanded=True):
     model = st.selectbox(
         "Chat model",
         options=model_names or ["qwen2.5:14b-instruct"],
@@ -127,11 +127,11 @@ with st.sidebar.expander("🤖 Model", expanded=True):
     temperature = st.slider("Temperature", 0.0, 2.0, 0.0, 0.05)
     top_k_sources = st.slider("Top-K sources", 1, 15, 6, 1)
 
-with st.sidebar.expander("🔍 Filters", expanded=False):
+with st.sidebar.expander("Filters", expanded=False):
     filter_source = st.selectbox("Source type", ["All", "ctd", "metagenome", "remote_sensing"])
     filter_bay = st.selectbox("Bay", ["All", "O – Onagawa", "I – Ishinomaki", "M – Matsushima"])
 
-if st.sidebar.button("🗑️ Reset chat"):
+if st.sidebar.button("Reset chat"):
     st.session_state.messages = []
     st.session_state.pending_prompt = None
     st.rerun()
@@ -152,10 +152,10 @@ def _check_pg():
 
 pg_embed_count = _check_pg()
 if pg_embed_count > 0:
-    st.sidebar.success(f"🔗 pgvector active ({pg_embed_count} embedded docs)")
+    st.sidebar.success(f"pgvector active ({pg_embed_count} embedded docs)")
     USE_PG = True
 else:
-    st.sidebar.info("📂 Local BM25 search")
+    st.sidebar.info("Local BM25 search")
     USE_PG = False
 
 
@@ -175,12 +175,12 @@ retriever = get_retriever()
 # ═══════════════════════════════════════════
 # Main UI
 # ═══════════════════════════════════════════
-st.title("🌊 Onagawa Source Chat")
+st.title("Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
 tab_chat, tab_explore, tab_ctd, tab_taxa, tab_sst, tab_analysis, tab_db, tab_stats = st.tabs(
-    ["💬 Chat", "📋 Evidence Explorer", "🌡️ CTD Profiles", "🧬 Taxa", "🛰️ SST",
-     "🔬 Pre-Analysis", "🗄️ Database", "📊 Stats"]
+    ["Chat", "Evidence Explorer", "CTD Profiles", "Taxa", "SST",
+     "Pre-Analysis", "Database", "Stats"]
 )
 
 
@@ -216,10 +216,10 @@ with tab_chat:
                     retrieved = retriever.search(user_text, k=top_k_sources,
                                                  source_type=src_filter, bay=bay_filter)
 
-                with st.expander(f"📎 Retrieved {len(retrieved)} sources", expanded=False):
+                with st.expander(f"Retrieved {len(retrieved)} sources", expanded=False):
                     for r in retrieved:
-                        src_icon = {"ctd": "🌡️", "metagenome": "🧬", "remote_sensing": "🛰️"}.get(
-                            r.get("source_type", ""), "📄")
+                        src_icon = {"ctd": "", "metagenome": "", "remote_sensing": ""}.get(
+                            r.get("source_type", ""), "")
                         st.markdown(
                             f"**{src_icon} [{r.get('id', r.get('doc_id', ''))}]** "
                             f"{r.get('title', '')}  \n"
@@ -254,17 +254,17 @@ with tab_chat:
                             placeholder.markdown(full)
                 except Exception as e:
                     if not full:
-                        full = f"⚠️ LLM error: {e}"
+                        full = f"LLM error: {e}"
                     placeholder.markdown(full)
 
                 st.session_state.messages.append({"role": "assistant", "content": full})
 
     with col_sources:
-        st.subheader("📚 Corpus")
+        st.subheader("Corpus")
         st.metric("Documents", len(docs))
         src_counts = Counter(d.get("source_type", "") for d in docs)
         for src, cnt in sorted(src_counts.items()):
-            icon = {"ctd": "🌡️", "metagenome": "🧬", "remote_sensing": "🛰️"}.get(src, "📄")
+            icon = {"ctd": "", "metagenome": "", "remote_sensing": ""}.get(src, "")
             st.caption(f"{icon} {src}: {cnt}")
 
 
@@ -275,7 +275,7 @@ with tab_explore:
     st.subheader("Evidence Explorer")
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
-        eq = st.text_input("🔍 Search documents", placeholder="e.g. dinoflagellate, temperature June")
+        eq = st.text_input("Search documents", placeholder="e.g. dinoflagellate, temperature June")
     with c2:
         esrc = st.selectbox("Source type ", ["All", "ctd", "metagenome", "remote_sensing"], key="esrc")
     with c3:
@@ -291,7 +291,7 @@ with tab_explore:
             results = retriever.search(eq, k=20, source_type=sf, bay=bf)
         st.caption(f"Found {len(results)} results")
         for r in results:
-            icon = {"ctd": "🌡️", "metagenome": "🧬", "remote_sensing": "🛰️"}.get(r.get("source_type"), "📄")
+            icon = {"ctd": "", "metagenome": "", "remote_sensing": ""}.get(r.get("source_type"), "")
             with st.expander(f"{icon} {r.get('title', r.get('id', ''))} — score {r.get('score',0):.4f}"):
                 st.markdown(r.get("text", ""))
                 st.caption(f"doc_id: {r.get('id', r.get('doc_id', ''))} | "
@@ -305,7 +305,7 @@ with tab_explore:
 # TAB: CTD Profiles
 # ═══════════════════════════════════════════
 with tab_ctd:
-    st.subheader("🌡️ CTD Depth Profiles")
+    st.subheader("CTD Depth Profiles")
     if ctd_profiles.empty:
         st.warning("No CTD profile data available.")
     else:
@@ -351,7 +351,7 @@ with tab_ctd:
 # TAB: Taxa
 # ═══════════════════════════════════════════
 with tab_taxa:
-    st.subheader("🧬 Taxonomic Composition")
+    st.subheader("Taxonomic Composition")
     if sample_ctx.empty:
         st.warning("No metagenome data available.")
     else:
@@ -426,7 +426,7 @@ with tab_taxa:
 # TAB: SST
 # ═══════════════════════════════════════════
 with tab_sst:
-    st.subheader("🛰️ Satellite SST")
+    st.subheader("Satellite SST")
     if sst_ts.empty:
         st.warning("No SST data. Run `python scripts/ingest.py` to process SST files.")
     else:
@@ -469,7 +469,7 @@ with tab_sst:
 # TAB: Stats
 # ═══════════════════════════════════════════
 with tab_stats:
-    st.subheader("📊 Corpus Statistics")
+    st.subheader("Corpus Statistics")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total documents", len(docs))
@@ -505,7 +505,7 @@ with tab_stats:
 # TAB: Pre-Analysis
 # ═══════════════════════════════════════════
 with tab_analysis:
-    st.subheader("🔬 Pre-Analysis")
+    st.subheader("Pre-Analysis")
     st.caption("Precomputed ecological relationships across CTD, metagenome, and SST data.")
 
     # Load analysis data
@@ -516,7 +516,7 @@ with tab_analysis:
         st.warning("No pre-analysis data found. Run `python scripts/run_pre_analysis.py` to compute.")
     else:
         pa_tab1, pa_tab2, pa_tab3, pa_tab4 = st.tabs(
-            ["📈 CTD Trends", "🔗 Correlations", "🌀 Diversity", "🕸️ Co-occurrence"]
+            ["CTD Trends", "Correlations", "Diversity", "Co-occurrence"]
         )
 
         # ── Sub-tab 1: CTD Trends ──
@@ -582,7 +582,7 @@ with tab_analysis:
 
                     # Stratification index
                     if "strat_index_mean" in trends_df.columns:
-                        with st.expander("🌡️ Thermal Stratification Index", expanded=False):
+                        with st.expander("Thermal Stratification Index", expanded=False):
                             st.caption("Surface T − Bottom T: positive = stratified, ~0 = mixed")
                             strat = trends_df.dropna(subset=["strat_index_mean"]).sort_values("year_month")
                             fig2, ax2 = plt.subplots(figsize=(12, 3))
@@ -608,7 +608,7 @@ with tab_analysis:
                             plt.close(fig2)
 
                     # Data table
-                    with st.expander("📋 Raw trend data"):
+                    with st.expander("Raw trend data"):
                         st.dataframe(trends_df, width="stretch", height=300)
             else:
                 st.info("No CTD trend data available.")
@@ -678,7 +678,7 @@ with tab_analysis:
                 st.caption("* = p < 0.05. Positive ρ = genus abundance increases with variable.")
 
                 # Significant correlations table
-                with st.expander("📋 Significant correlations (p<0.05)"):
+                with st.expander("Significant correlations (p<0.05)"):
                     sig = corr_df[corr_df["significant"]].sort_values("p_value")
                     st.dataframe(sig, width="stretch", hide_index=True)
             else:
@@ -736,7 +736,7 @@ with tab_analysis:
                 plt.close(fig)
 
                 # Data table
-                with st.expander("📋 Full diversity data"):
+                with st.expander("Full diversity data"):
                     st.dataframe(sd, width="stretch", height=300, hide_index=True)
             else:
                 st.info("No diversity data. Run `python scripts/run_pre_analysis.py`.")
@@ -776,7 +776,7 @@ with tab_analysis:
                 plt.close(fig)
 
                 # Top co-occurring pairs
-                with st.expander("🔗 Top co-occurring pairs"):
+                with st.expander("Top co-occurring pairs"):
                     pairs = []
                     genera = cooc_df.index.tolist()
                     for i in range(len(genera)):
@@ -796,7 +796,7 @@ with tab_analysis:
 # TAB: Database Explorer
 # ═══════════════════════════════════════════
 with tab_db:
-    st.subheader("🗄️ Database Explorer")
+    st.subheader("Database Explorer")
 
     if not USE_PG:
         st.warning("PostgreSQL is not connected. Start the database with `podman compose up -d`.")
@@ -814,7 +814,7 @@ with tab_db:
 
         # ── Sub-tabs inside Database ──
         db_sub1, db_sub2, db_sub3, db_sub4 = st.tabs(
-            ["📋 Table Browser", "🔎 SQL Console", "📐 Schema", "📊 Embeddings"]
+            ["Table Browser", "SQL Console", "Schema", "Embeddings"]
         )
 
         # ──────────────────────────────────
@@ -868,7 +868,7 @@ with tab_db:
                     # Download
                     csv_data = df_result[display_cols].to_csv(index=False)
                     st.download_button(
-                        f"⬇️ Download {selected_table} ({len(df_result)} rows)",
+                        f"Download {selected_table} ({len(df_result)} rows)",
                         data=csv_data,
                         file_name=f"{selected_table}_export.csv",
                         mime="text/csv",
@@ -878,7 +878,7 @@ with tab_db:
 
                 # Row detail inspector
                 if "df_result" in dir() and not df_result.empty:
-                    with st.expander("🔍 Row Inspector", expanded=False):
+                    with st.expander("Row Inspector", expanded=False):
                         row_idx = st.number_input("Row index", 0, len(df_result) - 1, 0, key="db_row_idx")
                         row_data = df_result.iloc[row_idx]
                         for col_name, val in row_data.items():
@@ -911,14 +911,14 @@ ORDER BY n_docs DESC;"""
 
             col_run, col_info = st.columns([1, 3])
             with col_run:
-                run_sql = st.button("▶️ Run Query", key="db_run_sql")
+                run_sql = st.button("Run Query", key="db_run_sql")
 
             if run_sql and sql_input.strip():
                 # Safety: block destructive statements
                 sql_upper = sql_input.strip().upper()
                 blocked = ["DROP", "DELETE", "TRUNCATE", "ALTER", "INSERT", "UPDATE", "CREATE"]
                 if any(sql_upper.startswith(kw) for kw in blocked):
-                    st.error("❌ Only SELECT queries are allowed.")
+                    st.error("Only SELECT queries are allowed.")
                 else:
                     try:
                         import time as _time
@@ -927,14 +927,14 @@ ORDER BY n_docs DESC;"""
                         elapsed = _time.perf_counter() - t0
 
                         with col_info:
-                            st.caption(f"✅ {len(df_sql)} rows in {elapsed:.3f}s")
+                            st.caption(f"{len(df_sql)} rows in {elapsed:.3f}s")
 
                         # Hide embedding columns
                         display = [c for c in df_sql.columns if c not in ("embedding", "text_tsv")]
                         st.dataframe(df_sql[display], width="stretch", height=400)
 
                         st.download_button(
-                            f"⬇️ Download result ({len(df_sql)} rows)",
+                            f"Download result ({len(df_sql)} rows)",
                             data=df_sql[display].to_csv(index=False),
                             file_name="query_result.csv",
                             mime="text/csv",
@@ -952,7 +952,7 @@ ORDER BY n_docs DESC;"""
                 pk = inspector.get_pk_constraint(tname)
                 indexes = inspector.get_indexes(tname)
 
-                with st.expander(f"📋 **{tname}** ({len(cols)} columns)", expanded=False):
+                with st.expander(f"**{tname}** ({len(cols)} columns)", expanded=False):
                     # Column table
                     schema_rows = []
                     pk_cols = set(pk.get("constrained_columns", []))
@@ -961,7 +961,7 @@ ORDER BY n_docs DESC;"""
                             "Column": c["name"],
                             "Type": str(c["type"]),
                             "Nullable": "✓" if c.get("nullable", True) else "✗",
-                            "PK": "🔑" if c["name"] in pk_cols else "",
+                            "PK": "" if c["name"] in pk_cols else "",
                             "Default": str(c.get("default", "") or ""),
                         })
                     st.dataframe(pd.DataFrame(schema_rows), width="stretch", hide_index=True)
@@ -1010,11 +1010,11 @@ ORDER BY n_docs DESC;"""
 
             coverage_pct = (embedded / total_docs * 100) if total_docs > 0 else 0
             if coverage_pct >= 100:
-                st.success(f"✅ 100% embedding coverage ({config.EMBEDDING_MODEL}, {config.EMBEDDING_DIM}-dim)")
+                st.success(f"100% embedding coverage ({config.EMBEDDING_MODEL}, {config.EMBEDDING_DIM}-dim)")
             elif coverage_pct > 0:
-                st.warning(f"⚠️ {coverage_pct:.0f}% embedding coverage — run `scripts/load_db.py --embed`")
+                st.warning(f"{coverage_pct:.0f}% embedding coverage — run `scripts/load_db.py --embed`")
             else:
-                st.error("❌ No embeddings — run `scripts/load_db.py --embed`")
+                st.error("No embeddings — run `scripts/load_db.py --embed`")
 
             st.markdown("### Documents by source type")
             emb_df = pd.DataFrame([
@@ -1034,7 +1034,7 @@ ORDER BY n_docs DESC;"""
                 st.markdown(f"- **{lt}**: {cnt:,} links")
 
             # Similarity test tool
-            st.markdown("### 🧪 Similarity Probe")
+            st.markdown("### Similarity Probe")
             st.caption("Test what a query retrieves via vector vs FTS.")
             probe_q = st.text_input("Probe query", placeholder="e.g. chlorophyll bloom summer", key="db_probe")
             if probe_q:
