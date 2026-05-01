@@ -118,19 +118,55 @@ try:
 except Exception:
     model_names = []
 
+# ── Model Settings ──
 with st.sidebar.expander("Model", expanded=True):
     model = st.selectbox(
         "Chat model",
         options=model_names or ["qwen2.5:14b-instruct"],
         index=0,
     )
-    temperature = st.slider("Temperature", 0.0, 2.0, 0.0, 0.05)
-    top_k_sources = st.slider("Top-K sources", 1, 15, 6, 1)
+    temperature = st.slider("Temperature", 0.0, 2.0, 0.0, 0.05,
+                            help="Controls randomness. 0 = deterministic, higher = more creative.")
+    top_p = st.slider("Top-P (nucleus sampling)", 0.0, 1.0, 0.9, 0.05,
+                      help="Cumulative probability cutoff for token sampling. Lower = more focused.")
+    repeat_penalty = st.slider("Repeat penalty", 0.5, 2.0, 1.1, 0.05,
+                               help="Penalizes token repetition. Higher = less repetitive output.")
+    num_ctx = st.select_slider("Context window", options=[2048, 4096, 8192, 16384, 32768],
+                               value=8192,
+                               help="Max tokens the model can process. Larger = more context but slower.")
 
+# ── Retrieval Settings ──
+with st.sidebar.expander("Retrieval", expanded=False):
+    top_k_sources = st.slider("Top-K sources", 1, 20, 6, 1,
+                              help="Number of documents retrieved per query.")
+
+    st.caption("**Hybrid search weights**")
+    vector_weight = st.slider("Vector weight", 0.0, 1.0, 0.6, 0.05,
+                              help="Weight for semantic (embedding) similarity in RRF fusion.")
+    fts_weight = st.slider("FTS weight", 0.0, 1.0, 0.4, 0.05,
+                           help="Weight for keyword (full-text) search in RRF fusion.")
+
+    rrf_k = st.slider("RRF-k constant", 1, 200, 60, 1,
+                       help="Smoothing constant for Reciprocal Rank Fusion. "
+                            "Higher = more uniform blending; lower = sharper rank differences.")
+
+    inject_analysis = st.checkbox("Inject pre-analysis context", value=True,
+                                  help="When enabled, precomputed ecological analyses are "
+                                       "automatically added to prompts for complex queries.")
+
+# ── Filters ──
 with st.sidebar.expander("Filters", expanded=False):
     filter_source = st.selectbox("Source type", ["All", "ctd", "metagenome", "remote_sensing"])
-    filter_bay = st.selectbox("Bay", ["All", "O – Onagawa", "I – Ishinomaki", "M – Matsushima"])
+    filter_bay = st.selectbox("Bay", ["All", "O -- Onagawa", "I -- Ishinomaki", "M -- Matsushima"])
 
+    st.caption("**Time range**")
+    filter_time_from = st.text_input("From (YYYY-MM-DD)", value="",
+                                     help="Filter documents from this date onward.")
+    filter_time_to = st.text_input("To (YYYY-MM-DD)", value="",
+                                   help="Filter documents up to this date.")
+
+# ── Actions ──
+st.sidebar.markdown("---")
 if st.sidebar.button("Reset chat"):
     st.session_state.messages = []
     st.session_state.pending_prompt = None
@@ -178,10 +214,443 @@ retriever = get_retriever()
 st.title("Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
-tab_chat, tab_explore, tab_data, tab_analysis, tab_db, tab_stats = st.tabs(
-    ["Chat", "Evidence Explorer", "Data",
+tab_overview, tab_chat, tab_explore, tab_data, tab_analysis, tab_db, tab_stats = st.tabs(
+    ["Overview", "Chat", "Evidence Explorer", "Data",
      "Pre-Analysis", "Database", "Stats"]
 )
+
+
+# ═══════════════════════════════════════════
+# TAB: Overview
+# ═══════════════════════════════════════════
+with tab_overview:
+    st.subheader("System Overview")
+    st.caption("End-to-end architecture of the Onagawa Source Chat RAG pipeline.")
+
+    # ─── Live pipeline statistics ───
+    # Gather stats from loaded data and filesystem
+    _prov_path = config.PROVENANCE_DIR / "provenance.jsonl"
+    _prov_count = 0
+    if _prov_path.exists():
+        with open(_prov_path, "r") as _f:
+            _prov_count = sum(1 for _ in _f)
+
+    _norm_files = list(config.NORMALIZED_DIR.glob("*.parquet")) if config.NORMALIZED_DIR.exists() else []
+    _analysis_files = list(config.ANALYSIS_DIR.glob("*.parquet")) if config.ANALYSIS_DIR.exists() else []
+    _analysis_docs_path = config.ANALYSIS_DIR / "analysis_documents.jsonl"
+    _n_analysis_docs = 0
+    if _analysis_docs_path.exists():
+        with open(_analysis_docs_path, "r") as _f:
+            _n_analysis_docs = sum(1 for line in _f if line.strip())
+
+    _anchor_path = config.CANONICAL_DIR / "anchor_events.parquet"
+    _n_anchors = 0
+    if _anchor_path.exists():
+        _n_anchors = len(pd.read_parquet(_anchor_path))
+
+    _links_path = config.CANONICAL_DIR / "cross_source_links.parquet"
+    _n_links = 0
+    if _links_path.exists():
+        _n_links = len(pd.read_parquet(_links_path))
+
+    # ─── Pipeline stages as interactive expanders ───
+    st.markdown("---")
+    st.markdown("### Pipeline Architecture")
+    st.caption("Click each stage to explore what happens at that layer.")
+
+    # Stage 1: Data Sources
+    with st.expander("Stage 1 -- Data Sources", expanded=True):
+        st.markdown("""
+This system integrates three marine monitoring data sources from Miyagi Prefecture, Japan:
+
+| Source | Instrument / Platform | Format | Description |
+|---|---|---|---|
+| **CTD** | PlanDyo multi-sensor | TSV | Depth-resolved water column profiles (temperature, salinity, dissolved oxygen, chlorophyll-a, turbidity) |
+| **Metagenome** | PlanDyo sequencing | TSV | Community composition via Kraken2 (prokaryotes) and MetaEuk (eukaryotes) at genus level |
+| **SST** | Himawari-9 satellite | NetCDF | Hourly sea surface temperature at 0.02-degree resolution |
+""")
+
+        st.markdown("**Study sites:**")
+        site_df = pd.DataFrame({
+            "Bay": ["Onagawa (O)", "Ishinomaki (I)", "Matsushima (M)"],
+            "Latitude": ["~38.44 N", "~38.41 N", "~38.35 N"],
+            "Longitude": ["~141.45 E", "~141.30 E", "~141.06 E"],
+            "Data": ["CTD + Metagenome + SST", "CTD + Metagenome", "CTD + Metagenome"],
+        })
+        st.dataframe(site_df, hide_index=True, width="stretch")
+
+        # Live stats
+        c1, c2, c3 = st.columns(3)
+        _raw_ctd_count = len(list(config.RAW_CTD_DIR.glob("*"))) if config.RAW_CTD_DIR.exists() else 0
+        _raw_meta_count = len(list(config.RAW_META_DIR.glob("*"))) if config.RAW_META_DIR.exists() else 0
+        c1.metric("CTD raw files", _raw_ctd_count)
+        c2.metric("Metagenome raw files", _raw_meta_count)
+        c3.metric("Total registered (provenance)", f"{_prov_count:,}")
+
+    # Stage 2: Ingestion & Provenance
+    with st.expander("Stage 2 -- Ingestion and Provenance Tracking"):
+        st.markdown("""
+Every raw file is registered with a **SHA-256 hash** before any processing begins.
+This creates an immutable provenance chain from raw bytes to final LLM answers.
+
+**What happens:**
+1. Each file is scanned and its SHA-256 checksum computed
+2. Metadata recorded: filename, size, modification time, hash
+3. Written to `provenance.jsonl` as an append-only log
+
+**Why it matters:**  
+If a source file changes upstream, the hash mismatch is immediately detectable,
+ensuring reproducibility and audit trail for scientific claims.
+""")
+
+        c1, c2 = st.columns(2)
+        c1.metric("Files registered", f"{_prov_count:,}")
+        c2.metric("Registry location", "data/provenance/provenance.jsonl")
+
+        if _prov_path.exists():
+            with st.expander("Preview provenance records"):
+                import json as _json
+                _prov_sample = []
+                with open(_prov_path, "r") as _f:
+                    for i, line in enumerate(_f):
+                        if i >= 5:
+                            break
+                        _prov_sample.append(_json.loads(line))
+                st.json(_prov_sample)
+
+    # Stage 3: Preprocessing
+    with st.expander("Stage 3 -- Preprocessing"):
+        st.markdown("""
+Raw data is standardized into analysis-ready Parquet files:
+
+**CTD Pipeline** (`preprocessing/ctd.py`):
+- Parse PlanDyo TSV with Japanese column headers
+- Standardize column names, units, and depth bins
+- Compute per-cast summaries (surface/bottom T, mean salinity, depth range)
+
+**Metagenome Pipeline** (`preprocessing/metagenome.py`):
+- Parse Kraken2 genus-level abundance tables
+- Parse MetaEuk genus-level abundance tables
+- Compute upper taxonomic group summaries (Dinoflagellata, Bacillariophyta, etc.)
+- Build per-sample QC context (total reads, classified fraction)
+
+**SST Pipeline** (`preprocessing/remote_sensing.py`):
+- Extract SST at monitoring coordinates from Himawari netCDF grids
+- Compute daily regional summaries (mean, min, max over bounding box)
+""")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Normalized files", len(_norm_files))
+        c2.metric("CTD profiles", f"{len(ctd_profiles):,}" if not ctd_profiles.empty else "0")
+        c3.metric("CTD casts", f"{len(ctd_summary):,}" if not ctd_summary.empty else "0")
+        c4.metric("SST observations", f"{len(sst_ts):,}" if not sst_ts.empty else "0")
+
+        if not ctd_profiles.empty:
+            st.markdown("**Available CTD variables:**")
+            ctd_vars = [c for c in ctd_profiles.columns
+                        if c not in ["sample_id", "depth_m", "bay", "station", "date"]]
+            st.code(", ".join(ctd_vars))
+
+    # Stage 4: Canonical Schema & Linking
+    with st.expander("Stage 4 -- Spatiotemporal Linking (Anchor Events)"):
+        st.markdown("""
+An **Anchor Event** is a canonical spatiotemporal record that connects observations
+from different instruments taken at the same place and time.
+
+**How it works:**
+1. Each CTD cast and metagenome sample generates an anchor at (lat, lon, datetime)
+2. Each SST observation generates an anchor at (monitoring point, datetime)
+3. Cross-source links are created when anchors overlap temporally (same day/month)
+
+This enables the system to answer questions like  
+*"What was the microbial community like when SST was highest?"*  
+by following links from SST anchors to matching metagenome anchors.
+""")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Anchor events", f"{_n_anchors:,}")
+        c2.metric("Cross-source links", f"{_n_links:,}")
+        c3.metric("Link types", "same_sample, time_match")
+
+    # Stage 5: Pre-Analysis
+    with st.expander("Stage 5 -- Pre-Analysis (Ecological Relationships)"):
+        st.markdown("""
+Before retrieval, the system precomputes ecological relationships that span
+multiple data sources. These analyses would be impossible to derive from
+individual retrieved documents alone.
+
+| Analysis | Method | Output |
+|---|---|---|
+| **CTD Trends** | Monthly mean/std aggregation per bay | Seasonal temperature, salinity, DO patterns |
+| **Taxa-Env Correlations** | Spearman rank correlation | Which genera increase/decrease with environmental variables |
+| **Diversity Indices** | Shannon H', Simpson 1-D, Richness, Evenness | Community diversity per sample |
+| **Bay Comparison** | Cross-bay CTD aggregation | Environmental differences between study sites |
+| **Co-occurrence** | Jaccard similarity (10-90% prevalence genera) | Which genera tend to appear together |
+
+These results are stored as Parquet files and also serialized into
+**analysis documents** (JSONL) that get injected into the LLM prompt
+when the user asks complex ecosystem questions.
+""")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Analysis outputs", len(_analysis_files))
+        c2.metric("Analysis docs (for RAG)", _n_analysis_docs)
+        c3.metric("Trigger keywords", "correlation, diversity, trend, seasonal, ...")
+
+    # Stage 6: Retrieval Documents
+    with st.expander("Stage 6 -- Retrieval Document Generation"):
+        st.markdown("""
+Raw data is transformed into **narrative text chunks** optimized for LLM comprehension.
+Each document is a self-contained paragraph with statistics, not raw CSV rows.
+
+**Example CTD document:**
+> *CTD cast 2024-06-O-St1 at Onagawa Bay on 2024-06-15. Surface temperature: 18.5C,
+> bottom temperature: 12.3C (stratification index: 6.2C). Mean salinity: 33.8 PSU.
+> DO saturation: 95.2%. Chlorophyll-a peak: 2.1 ug/L at 5m depth.*
+
+**Example Metagenome document:**
+> *Metagenome sample 2024-06-O at Onagawa Bay. Kraken2 classification: 716 genera detected.
+> Top 5 by abundance: Synechococcus (12.3%), Pelagibacter (8.7%), Candidatus Actinomarina (5.1%),
+> Prochlorococcus (4.2%), Planktomarina (3.8%). Shannon diversity: 4.21.*
+
+Each document carries metadata: source_type, sample_id, bay, station, datetime,
+and a provenance event_id linking back to the original file.
+""")
+
+        n_ctd_docs = sum(1 for d in docs if d.get("source_type") == "ctd")
+        n_meta_docs = sum(1 for d in docs if d.get("source_type") == "metagenome")
+        n_sst_docs = sum(1 for d in docs if d.get("source_type") == "remote_sensing")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total documents", len(docs))
+        c2.metric("CTD docs", n_ctd_docs)
+        c3.metric("Metagenome docs", n_meta_docs)
+        c4.metric("SST docs", n_sst_docs)
+
+    # Stage 7: Storage & Embeddings
+    with st.expander("Stage 7 -- PostgreSQL Storage and Vector Embeddings"):
+        st.markdown(f"""
+Documents are loaded into **PostgreSQL 16 + pgvector** for production search.
+
+**Embedding model:** `{config.EMBEDDING_MODEL}` ({config.EMBEDDING_DIM}-dim vectors)
+
+**Database schema (9 tables):**
+
+| Table | Purpose |
+|---|---|
+| `retrieval_document` | Text chunks + {config.EMBEDDING_DIM}-dim embeddings + tsvector for FTS |
+| `anchor_event` | Spatiotemporal linking records |
+| `ctd_profile` | Full depth-resolved CTD measurements |
+| `ctd_summary` | Per-cast aggregated statistics |
+| `metagenome_sample` | Per-sample sequencing metadata + top taxa |
+| `sst_point_observation` | Hourly satellite SST values |
+| `sst_daily_summary` | Daily regional SST aggregates |
+| `cross_source_link` | Temporal links between data sources |
+| `provenance_record` | File registration records |
+
+**Infrastructure:** Podman container (`pgvector/pgvector:pg16`) on port 5433.
+""")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Embedding model", config.EMBEDDING_MODEL)
+        c2.metric("Dimensions", config.EMBEDDING_DIM)
+        c3.metric("Embedded docs", pg_embed_count if USE_PG else "N/A (PG offline)")
+
+    # Stage 8: Hybrid Retrieval
+    with st.expander("Stage 8 -- Hybrid Retrieval (Vector + FTS + RRF)"):
+        st.markdown("""
+The retrieval engine combines two complementary search strategies:
+
+**1. Vector Search (Semantic)**
+- User query is embedded via the same model (`nomic-embed-text`)
+- Cosine similarity against all document embeddings
+- Captures semantic meaning: "warm water" matches "high temperature"
+
+**2. Full-Text Search (Lexical)**
+- PostgreSQL `tsvector` + `ts_rank_cd` scoring
+- Exact keyword matching with stemming and stop-word removal
+- Captures specific terms: "Gyrodinium", "station St1"
+
+**3. Reciprocal Rank Fusion (RRF)**
+```
+RRF_score(doc) = 1/(k + rank_vector) + 1/(k + rank_fts)   where k = 60
+```
+This combines both rankings into a single score, ensuring documents that rank
+well in both searches are surfaced first.
+
+**4. SQL Filters**
+Users can filter by source type (CTD/metagenome/SST), bay (O/I/M),
+and time range -- all applied at the SQL level before scoring.
+
+**5. Analysis Context Injection**
+For complex ecosystem queries (detected via keywords: *correlation*, *diversity*,
+*seasonal*, *trend*, etc.), precomputed analysis summaries are automatically
+injected as supplementary context alongside retrieved evidence.
+""")
+
+        st.markdown("**Fallback:** When PostgreSQL is unavailable, the system degrades gracefully "
+                     "to local BM25 + numpy cosine search with the same document corpus.")
+
+        c1, c2 = st.columns(2)
+        c1.metric("Current backend", "pgvector (hybrid)" if USE_PG else "Local BM25")
+        c2.metric("Top-K retrieval", top_k_sources)
+
+    # Stage 9: LLM Prompting
+    with st.expander("Stage 9 -- Provenance-Aware LLM Prompting"):
+        st.markdown(f"""
+The final stage constructs a structured prompt for the LLM:
+
+**Current model:** `{model}`
+
+**Prompt structure:**
+1. **System instructions** -- Rules for citation, data types, and study site context
+2. **Retrieved evidence** -- Top-K documents with `[doc_id]` tags for citation
+3. **Analysis context** -- Precomputed ecological summaries (when relevant)
+4. **User question** -- The original query
+
+**Citation rules enforced:**
+- Every claim must cite a source using `[doc_id]` notation
+- Distinguish between CTD measurements, metagenome taxonomy, and satellite SST
+- State data gaps explicitly and report values with units
+- Use `[analysis_*]` notation when citing precomputed analyses
+
+This ensures the LLM cannot hallucinate facts -- every statement in the answer
+can be traced back through the document, to the anchor event, to the original
+file with its SHA-256 hash.
+""")
+
+    # ─── Pipeline flow diagram ───
+    st.markdown("---")
+    st.markdown("### Pipeline Flow")
+
+    n_ctd_docs = sum(1 for d in docs if d.get("source_type") == "ctd")
+    n_meta_docs = sum(1 for d in docs if d.get("source_type") == "metagenome")
+    n_sst_docs = sum(1 for d in docs if d.get("source_type") == "remote_sensing")
+
+    # ─── Graphviz data flow diagram ───
+    _embed_label = f"{pg_embed_count} vectors" if USE_PG else "Local numpy"
+    _backend_label = "pgvector Hybrid" if USE_PG else "BM25 Local"
+
+    _dot = f"""
+    digraph pipeline {{
+        rankdir=TB;
+        bgcolor="white";
+        fontname="Helvetica";
+        node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box,
+              color="#64748b", penwidth=1.2];
+        edge [fontname="Helvetica", fontsize=9, color="#94a3b8", penwidth=1.2];
+
+        // ── Data Sources ──
+        subgraph cluster_sources {{
+            label="Data Sources";
+            labeljust=l;
+            fontsize=13;
+            fontcolor="#334155";
+            style="dashed,rounded";
+            color="#cbd5e1";
+            bgcolor="#f8fafc";
+
+            ctd_raw  [label="CTD\\n1 TSV, 10,955 profiles", fillcolor="#dbeafe"];
+            meta_raw [label="Metagenome\\n11 TSV files", fillcolor="#dcfce7"];
+            sst_raw  [label="Satellite SST\\n1,848 NetCDF", fillcolor="#fef3c7"];
+        }}
+
+        // ── Provenance ──
+        provenance [label="Provenance Registry\\n{_prov_count:,} files, SHA-256 hashes", fillcolor="#f1f5f9"];
+
+        // ── Preprocessing ──
+        subgraph cluster_preprocess {{
+            label="Preprocessing";
+            labeljust=l;
+            fontsize=13;
+            fontcolor="#334155";
+            style="dashed,rounded";
+            color="#cbd5e1";
+            bgcolor="#f8fafc";
+
+            ctd_pp  [label="CTD Pipeline\\nstandardize, summaries", fillcolor="#dbeafe"];
+            meta_pp [label="Metagenome Pipeline\\nKraken, MetaEuk, groups", fillcolor="#dcfce7"];
+            sst_pp  [label="SST Pipeline\\npoint extraction, daily agg", fillcolor="#fef3c7"];
+        }}
+
+        // ── Normalized ──
+        normalized [label="Normalized Parquets\\n{len(_norm_files)} files", fillcolor="#f1f5f9"];
+
+        // ── Canonical ──
+        anchors [label="Anchor Events\\n{_n_anchors:,} spatiotemporal anchors\\n{_n_links:,} cross-source links", fillcolor="#e0e7ff"];
+
+        // ── Pre-Analysis ──
+        preanalysis [label="Pre-Analysis\\n{len(_analysis_files)} ecological analyses\\n{_n_analysis_docs} RAG documents", fillcolor="#fae8ff"];
+
+        // ── Retrieval Docs ──
+        ret_docs [label="Retrieval Documents\\n{len(docs)} narrative chunks\\n({n_ctd_docs} CTD + {n_meta_docs} meta + {n_sst_docs} SST)", fillcolor="#f1f5f9"];
+
+        // ── Storage ──
+        subgraph cluster_storage {{
+            label="PostgreSQL + pgvector";
+            labeljust=l;
+            fontsize=13;
+            fontcolor="#334155";
+            style="dashed,rounded";
+            color="#cbd5e1";
+            bgcolor="#f8fafc";
+
+            embeddings [label="Vector Embeddings\\n{_embed_label}\\n{config.EMBEDDING_DIM}-dim {config.EMBEDDING_MODEL}", fillcolor="#dbeafe"];
+            fts        [label="Full-Text Index\\ntsvector + ts_rank_cd", fillcolor="#dcfce7"];
+            db_tables  [label="9 Relational Tables\\nprofiles, samples, links", fillcolor="#fef3c7"];
+        }}
+
+        // ── Retrieval ──
+        retrieval [label="Hybrid Retrieval\\n{_backend_label}\\nVector + FTS + RRF (k=60)", fillcolor="#e0e7ff", penwidth=2];
+
+        // ── LLM ──
+        llm [label="LLM ({model})\\nProvenance-aware prompting\\nCitation-grounded answers",
+             fillcolor="#fecdd3", penwidth=2, fontsize=12];
+
+        // ── Edges ──
+        ctd_raw  -> provenance;
+        meta_raw -> provenance;
+        sst_raw  -> provenance;
+
+        provenance -> ctd_pp  [label="  registered"];
+        provenance -> meta_pp;
+        provenance -> sst_pp;
+
+        ctd_pp  -> normalized;
+        meta_pp -> normalized;
+        sst_pp  -> normalized;
+
+        normalized -> anchors   [label="  link"];
+        normalized -> preanalysis [label="  analyze"];
+
+        anchors    -> ret_docs [label="  build"];
+        normalized -> ret_docs;
+
+        ret_docs    -> embeddings [label="  embed"];
+        ret_docs    -> fts        [label="  index"];
+        ret_docs    -> db_tables;
+        preanalysis -> db_tables;
+
+        embeddings -> retrieval [label="  cosine"];
+        fts        -> retrieval [label="  rank"];
+
+        preanalysis -> retrieval [label="  inject", style=dashed, color="#a855f7"];
+
+        retrieval -> llm [label="  top-K + context", penwidth=2];
+    }}
+    """
+
+    st.graphviz_chart(_dot, use_container_width=True)
+
+    # ─── Summary metrics row ───
+    st.markdown("#### Pipeline Summary")
+    mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+    mc1.metric("Raw files", f"{_prov_count:,}")
+    mc2.metric("Parquets", len(_norm_files))
+    mc3.metric("Anchors", f"{_n_anchors:,}")
+    mc4.metric("Documents", len(docs))
+    mc5.metric("Embeddings", pg_embed_count if USE_PG else "local")
+    mc6.metric("Backend", "pgvector" if USE_PG else "BM25")
 
 
 # ═══════════════════════════════════════════
@@ -208,13 +677,19 @@ with tab_chat:
                 # Retrieve
                 src_filter = None if filter_source == "All" else filter_source
                 bay_filter = None if filter_bay == "All" else filter_bay[0]
+                t_from = filter_time_from.strip() or None
+                t_to = filter_time_to.strip() or None
                 if USE_PG:
                     from orchestration.unified import retrieve
                     retrieved = retrieve(user_text, k=top_k_sources,
-                                         source_type=src_filter, bay=bay_filter)
+                                         source_type=src_filter, bay=bay_filter,
+                                         time_from=t_from, time_to=t_to,
+                                         vector_weight=vector_weight,
+                                         fts_weight=fts_weight, rrf_k=rrf_k)
                 else:
                     retrieved = retriever.search(user_text, k=top_k_sources,
-                                                 source_type=src_filter, bay=bay_filter)
+                                                 source_type=src_filter, bay=bay_filter,
+                                                 time_from=t_from, time_to=t_to)
 
                 with st.expander(f"Retrieved {len(retrieved)} sources", expanded=False):
                     for r in retrieved:
@@ -229,7 +704,8 @@ with tab_chat:
 
                 # Build prompt
                 from orchestration.unified import build_prompt
-                prompt_text = build_prompt(user_text, retrieved)
+                prompt_text = build_prompt(user_text, retrieved,
+                                           inject_analysis=inject_analysis)
 
                 # Call Ollama
                 full = ""
@@ -241,7 +717,12 @@ with tab_chat:
                             "model": model,
                             "messages": [{"role": "user", "content": prompt_text}],
                             "stream": True,
-                            "options": {"temperature": temperature},
+                            "options": {
+                                "temperature": temperature,
+                                "top_p": top_p,
+                                "repeat_penalty": repeat_penalty,
+                                "num_ctx": num_ctx,
+                            },
                         },
                         stream=True, timeout=120,
                     )

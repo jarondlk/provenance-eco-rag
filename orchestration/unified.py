@@ -35,6 +35,9 @@ def retrieve(
     bay: Optional[str] = None,
     time_from: Optional[str] = None,
     time_to: Optional[str] = None,
+    vector_weight: float = 0.6,
+    fts_weight: float = 0.4,
+    rrf_k: int = 60,
 ) -> List[dict]:
     """
     Retrieve relevant documents using the best available backend.
@@ -45,6 +48,8 @@ def retrieve(
         results = hybrid_search(
             query, k=k, source_type=source_type, bay=bay,
             time_from=time_from, time_to=time_to,
+            vector_weight=vector_weight, fts_weight=fts_weight,
+            rrf_k=rrf_k,
         )
         return [
             {
@@ -118,7 +123,12 @@ def _load_analysis_context(query: str) -> str:
     return text
 
 
-def build_prompt(query: str, results: List[dict]) -> str:
+def build_prompt(
+    query: str,
+    results: List[dict],
+    *,
+    inject_analysis: bool = True,
+) -> str:
     """
     Build the provenance-aware system prompt with evidence and analysis context.
     """
@@ -148,8 +158,8 @@ STUDY SITES:
         text = r.get("text", "")
         evidence_text += f"\n[{doc_id}] ({src}, {t})\n{text}\n"
 
-    # Inject analysis context for complex queries
-    analysis_text = _load_analysis_context(query)
+    # Inject analysis context for complex queries (when enabled)
+    analysis_text = _load_analysis_context(query) if inject_analysis else ""
 
     return f"{system}\n{evidence_text}{analysis_text}\n\nUSER QUESTION: {query}"
 
