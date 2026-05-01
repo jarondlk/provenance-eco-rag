@@ -86,6 +86,7 @@ streamlit run app.py
 ```
 
 The application provides a multi-tab interface:
+* **Overview**: System pipeline architecture (Graphviz) and live metrics.
 * **Chat**: Streaming LLM chat with provenance-aware RAG and source citations.
 * **Evidence Explorer**: Search documents by keyword, source type, and bay.
 * **CTD Profiles**: Interactive depth profiles and summary metrics.
@@ -190,7 +191,7 @@ flowchart LR
     end
 
     subgraph L7["Layer 7: Application"]
-        APP["Streamlit App\\n8 tabs, streaming LLM chat"]
+        APP["Streamlit App\\n9 tabs, streaming LLM chat"]
     end
 
     Sources --> L1 --> L2 --> L3 --> L3b --> L4 --> L5 --> L6 --> L7
@@ -218,7 +219,7 @@ flowchart LR
 
 ```
 source_chat_agt/
-├── app.py                              # Streamlit application (8 tabs, ~1,060 lines)
+├── app.py                              # Streamlit application (9 tabs, ~1,060 lines)
 ├── config.py                           # Centralized config (paths, DB, models)
 ├── docker-compose.yml                  # Podman/Docker – PostgreSQL + pgvector
 │
@@ -387,10 +388,11 @@ Every LLM query includes:
 
 ## Application (Streamlit)
 
-The app has **8 tabs**:
+The app has **9 tabs**:
 
 | Tab | Description |
 | --- | --- |
+| **Overview** | System pipeline architecture diagram (Graphviz) and live metrics (document counts, provenance). |
 | **Chat** | Streaming LLM chat with provenance-aware RAG, source citations, expandable evidence, and analysis context for complex queries |
 | **Evidence Explorer** | Search 323 documents by keyword + source type + bay, powered by pgvector hybrid search |
 | **CTD Profiles** | Interactive depth profiles for 162 casts — temperature, salinity, DO, Chl-a with per-cast summary metrics |
@@ -400,12 +402,12 @@ The app has **8 tabs**:
 | **Database** | 4 sub-tabs: Table Browser, SQL Console (read-only), Schema inspector, Embedding statistics + Similarity Probe |
 | **Stats** | Corpus metrics, sample coverage matrix, bay distribution, provenance file count |
 
-### Sidebar Features
+### Sidebar Configuration Center
 
-- Ollama model selector (auto-filters embedding models)
-- Temperature and Top-K sliders
-- Source type and bay filters
-- Backend status indicator (green = pgvector active, 323 embedded docs)
+- **Model Settings**: Controls for `chat_model`, `temperature`, `top_p` (nucleus sampling), `repeat_penalty`, and `context_window`.
+- **Retrieval Settings**: Granular control over hybrid search weights (`vector_weight`, `fts_weight`, `rrf_k` constant), `top_k_sources`, and a toggle to inject pre-analysis context.
+- **Filters**: Source type and Bay filters, plus date-range filtering (`time_from`, `time_to`).
+- **Status**: Backend connection indicator (e.g., green = pgvector active, 323 embedded docs).
 
 ---
 
