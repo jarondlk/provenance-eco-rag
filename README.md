@@ -1,4 +1,4 @@
-# provenance-monitoring-data-integration
+# provenance-eco-rag
 
 Onagawa Source Chat is a provenance-aware Retrieval-Augmented Generation (RAG) application for marine environmental monitoring in Miyagi Prefecture, Japan. It transforms fragmented field data (CTD water profiles, metagenome sequencing results, and satellite sea surface temperature observations) into a searchable, citation-grounded question-answering system.
 
