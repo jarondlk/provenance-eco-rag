@@ -1,0 +1,22 @@
+# Onagawa Source Chat - Dependencies
+# Provenance-aware Marine RAG System
+#
+# Install: pip install -r requirements.txt
+# Python:  3.12+
+
+# ── Core ──
+streamlit>=1.54.0
+pandas>=2.3.0
+numpy>=2.0.0
+matplotlib>=3.10.0
+scipy>=1.15.0
+requests>=2.32.0
+
+# ── Database ──
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+pgvector>=0.4.0
+
+# ── Satellite data ──
+xarray>=2024.0.0
+netCDF4>=1.7.0
