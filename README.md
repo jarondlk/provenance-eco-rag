@@ -2,7 +2,7 @@
 
 Onagawa Source Chat is a provenance-aware Retrieval-Augmented Generation (RAG) application for marine environmental monitoring in Miyagi Prefecture, Japan. It transforms fragmented field data (CTD water profiles, metagenome sequencing results, and satellite sea surface temperature observations) into a searchable, citation-grounded question-answering system.
 
-Every LLM-generated answer links back to its original data sources with traceable provenance. For complex ecosystem questions, the system also draws on precomputed ecological analyses (correlations, diversity indices, temporal trends) that go beyond what any single retrieved document can provide.
+Every LLM-generated answer links back to its original data sources with traceable provenance. For complex ecosystem questions, the system draws on **precomputed ecological analyses** (correlations, diversity indices, temporal trends) and **cross-source reliability validation** (SST↔CTD agreement, diversity prediction, corroboration scoring) that go beyond what any single retrieved document can provide.
 
 ## Study Sites
 
@@ -12,15 +12,16 @@ Every LLM-generated answer links back to its original data sources with traceabl
 
 ## Architecture
 
-The system follows an 8-layer pipeline:
+The system follows a 9-layer pipeline:
 1. **Ingestion**: Provenance registry via SHA-256 hashes.
 2. **Preprocessing**: Standardization of CTD profiles, metagenome abundance (Kraken/MetaEuk), and SST netCDFs.
 3. **Canonical Schema**: Anchor events for spatiotemporal linking.
 4. **Pre-Analysis**: Precomputed ecological relationships (trends, correlations, diversity, co-occurrence).
-5. **Retrieval Documents**: Generation of narrative text chunks from raw data.
-6. **Database**: PostgreSQL 16 + pgvector storing embeddings and metadata.
-7. **Retrieval**: Hybrid search (vector + Full-Text Search + Reciprocal Rank Fusion) and analysis context injection.
-8. **Application**: Streamlit interface with chat, data exploration, and analytics.
+5. **Reliability Ensurance**: Cross-source validation, gap interpolation, diversity prediction, and corroboration scoring.
+6. **Retrieval Documents**: Generation of narrative text chunks from raw data.
+7. **Database**: PostgreSQL 16 + pgvector storing embeddings and metadata.
+8. **Retrieval**: Hybrid search (vector + Full-Text Search + Reciprocal Rank Fusion) with analysis and reliability context injection.
+9. **Application**: Streamlit interface with chat, data exploration, and analytics.
 
 ## Technology Stack
 
@@ -73,7 +74,10 @@ python scripts/build_retrieval_docs.py
 # 3. Precompute ecological analyses
 python scripts/run_pre_analysis.py
 
-# 4. Populate database and generate embeddings
+# 4. Run cross-source reliability validation
+python scripts/run_reliability.py
+
+# 5. Populate database and generate embeddings
 python scripts/load_db.py --reset --embed
 ```
 
@@ -86,14 +90,12 @@ streamlit run app.py
 ```
 
 The application provides a multi-tab interface:
-* **Overview**: System pipeline architecture (Graphviz) and live metrics.
-* **Chat**: Streaming LLM chat with provenance-aware RAG and source citations.
+* **Overview**: System pipeline architecture (Graphviz) with live metrics covering all 9 pipeline stages.
+* **Chat**: Streaming LLM chat with provenance-aware RAG, source citations, and automatic analysis/reliability context injection.
 * **Evidence Explorer**: Search documents by keyword, source type, and bay.
-* **CTD Profiles**: Interactive depth profiles and summary metrics.
-* **Taxa**: Metagenome composition charts.
-* **SST**: Satellite temperature time series.
-* **Pre-Analysis**: Ecological trends, correlations, diversity, and co-occurrence matrices.
-* **Database**: Read-only SQL console and schema inspector.
+* **Data**: Interactive CTD depth profiles, metagenome composition (Kraken/MetaEuk), and SST time series.
+* **Pre-Analysis**: Ecological trends, correlations, diversity, co-occurrence matrices, and cross-source reliability validation.
+* **Database**: Read-only SQL console, table browser, schema inspector, and embedding statistics.
 * **Stats**: Corpus metrics and provenance tracking.
 
 ### Application Screenshots
@@ -115,22 +117,22 @@ The application provides a multi-tab interface:
 
 ## Retrieval System Details
 
-The hybrid retrieval system merges vector search (cosine similarity via pgvector) and full-text search (tsvector via PostgreSQL) using Reciprocal Rank Fusion (RRF). 
+The hybrid retrieval system merges vector search (cosine similarity via pgvector) and full-text search (tsvector via PostgreSQL) using Reciprocal Rank Fusion (RRF).
 
-For complex queries containing keywords like "correlation", "diversity", or "trend", the query orchestrator automatically injects precomputed analysis summaries as supplementary context alongside retrieved evidence, allowing the LLM to provide statistically grounded answers.
+For complex queries containing keywords like "correlation", "diversity", or "trend", the query orchestrator automatically injects precomputed analysis summaries as supplementary context. For queries involving data confidence, validation, or anomalies, cross-source reliability documents are also injected — providing the LLM with corroboration evidence and data quality assessments.
 
 ---
 
 # IN DEPTH INFORMATION ABOUT THE PROJECT
 
-> **Last updated:** 2026-04-30 · **Codebase:** 36 Python files, 6,408 lines
-> 
+> **Last updated:** 2026-05-11 · **Codebase:** 37 Python files, 7,178 lines
+>
 
 ## What This Project Is
 
 **Onagawa Source Chat** is a provenance-aware Retrieval-Augmented Generation (RAG) application for marine environmental monitoring in Miyagi Prefecture, Japan. It transforms fragmented field data — CTD water profiles, metagenome sequencing results, and satellite sea surface temperature (SST) observations — into a searchable, citation-grounded question-answering system.
 
-Every LLM-generated answer links back to its original data sources with traceable provenance. For complex ecosystem questions, the system also draws on **precomputed ecological analyses** (correlations, diversity indices, temporal trends) that go beyond what any single retrieved document can provide.
+Every LLM-generated answer links back to its original data sources with traceable provenance. For complex ecosystem questions, the system also draws on **precomputed ecological analyses** (correlations, diversity indices, temporal trends) and **cross-source reliability validation** (SST↔CTD agreement, gap interpolation, diversity prediction, corroboration scoring) that go beyond what any single retrieved document can provide.
 
 ### Study Sites
 
@@ -144,7 +146,7 @@ Every LLM-generated answer links back to its original data sources with traceabl
 
 ## Architecture
 
-The system follows an **8-layer pipeline** from raw data to grounded LLM responses:
+The system follows a **9-layer pipeline** from raw data to grounded LLM responses:
 
 ```mermaid
 flowchart LR
@@ -176,10 +178,17 @@ flowchart LR
         COOC["Co-occurrence\\n30×30 Jaccard"]
     end
 
+    subgraph L3c["Layer 3.5b: Reliability Ensurance"]
+        SSTCTD["SST↔CTD Validation\\n24 paired, 100% agree"]
+        GAP["Gap Interpolation\\n79 days filled"]
+        DIVPRED["Diversity Prediction\\n37 samples, 1 anomaly"]
+        CORROB["Corroboration\\n37 verified / 207 total"]
+    end
+
     subgraph L4["Layer 4: Retrieval Documents"]
         DOCS["323 Text Documents\\n162 CTD + 82 meta + 79 SST"]
         LINKS["496 Cross-Source Links"]
-        ADOCS["5 Analysis Documents"]
+        ADOCS["5 Analysis + 4 Reliability Documents"]
     end
 
     subgraph L5["Layer 5: Database"]
@@ -187,14 +196,14 @@ flowchart LR
     end
 
     subgraph L6["Layer 6: Retrieval"]
-        HYB["Hybrid Retriever\\nVector + FTS + RRF fusion\\n+ Analysis context injection"]
+        HYB["Hybrid Retriever\\nVector + FTS + RRF fusion\\n+ Analysis + Reliability injection"]
     end
 
     subgraph L7["Layer 7: Application"]
-        APP["Streamlit App\\n9 tabs, streaming LLM chat"]
+        APP["Streamlit App\\n7 tabs, streaming LLM chat"]
     end
 
-    Sources --> L1 --> L2 --> L3 --> L3b --> L4 --> L5 --> L6 --> L7
+    Sources --> L1 --> L2 --> L3 --> L3b --> L3c --> L4 --> L5 --> L6 --> L7
 ```
 
 ---
@@ -203,7 +212,7 @@ flowchart LR
 
 | Component | Technology |
 | --- | --- |
-| **Language** | Python 3.12 (36 files, 6,408 lines) |
+| **Language** | Python 3.12 (37 files, 7,178 lines) |
 | **Database** | PostgreSQL 16 + pgvector (cosine similarity) |
 | **Container** | Podman 5.4.2 (Apple HV) |
 | **LLM** | Ollama (local) — qwen2.5:14b-instruct |
@@ -219,8 +228,8 @@ flowchart LR
 
 ```
 source_chat_agt/
-├── app.py                              # Streamlit application (9 tabs, ~1,060 lines)
-├── config.py                           # Centralized config (paths, DB, models)
+├── app.py                              # Streamlit application (7 tabs, ~1,780 lines)
+├── config.py                           # Centralized config (paths, DB, models, thresholds)
 ├── docker-compose.yml                  # Podman/Docker – PostgreSQL + pgvector
 │
 ├── ingestion/
@@ -232,7 +241,8 @@ source_chat_agt/
 │   ├── ctd.py                          # CTD load → standardize → summaries
 │   ├── metagenome.py                  # Kraken/MetaEuk abundance, QC, groups
 │   ├── remote_sensing.py             # NetCDF SST extraction
-│   └── pre_analysis.py               # ★ Ecological pre-analysis (5 analyses)
+│   ├── pre_analysis.py               # ★ Ecological pre-analysis (5 analyses)
+│   └── reliability_ensurance.py      # ★ Cross-source validation (4 engines)
 │
 ├── schema/
 │   └── anchor_event.py                # Spatiotemporal linking
@@ -251,13 +261,14 @@ source_chat_agt/
 ├── orchestration/
 │   ├── query_orchestrator.py          # Evidence expansion via cross-source links
 │   └── unified.py                     # Auto-detect PG vs local, prompt builder
-│                                        + ★ analysis context injection
+│                                        + ★ analysis + reliability context injection
 │
 ├── scripts/
 │   ├── ingest.py                       # Full ingestion pipeline CLI
 │   ├── build_retrieval_docs.py        # Anchor events + docs + links
 │   ├── load_db.py                     # Populate PostgreSQL + embeddings
-│   └── run_pre_analysis.py           # ★ Pre-analysis pipeline CLI
+│   ├── run_pre_analysis.py           # ★ Pre-analysis pipeline CLI
+│   └── run_reliability.py            # ★ Reliability ensurance pipeline CLI
 │
 └── data/
     ├── raw/ctd/                        # 1 file (CTD_Onagawa.tsv, 1.2MB)
@@ -266,6 +277,7 @@ source_chat_agt/
     ├── canonical/                      # anchor_events, cross_source_links
     ├── serving/                        # retrieval docs, embeddings, registry
     ├── analysis/                       # ★ 6 pre-analysis outputs
+    ├── reliability/                    # ★ 5 reliability ensurance outputs
     └── provenance/                     # provenance.jsonl (1,849 records)
 ```
 
@@ -309,6 +321,16 @@ source_chat_agt/
 | `taxa_cooccurrence.parquet` | 30×30 Jaccard similarity matrix (variable-prevalence genera) |
 | `analysis_documents.jsonl` | 5 text summaries injected into RAG prompts |
 
+### Reliability Ensurance Outputs
+
+| File | Content |
+| --- | --- |
+| `sst_ctd_validation.parquet` | 24 paired SST↔CTD observations, **100% agreement** (mean ΔT=0.92°C) |
+| `gap_interpolation.parquet` | 79 SST days with interpolated CTD-equivalent surface temperatures (mean confidence=0.916) |
+| `diversity_prediction.parquet` | 37 samples with predicted vs actual Shannon diversity, **1 anomaly** detected (2024-07-O-s1, −2.3σ) |
+| `corroboration.parquet` | 207 observations scored: **37 verified**, 20 supported, 150 standalone |
+| `reliability_documents.jsonl` | 4 text summaries injected into RAG prompts |
+
 ### PostgreSQL Database (9 tables, 14,231 total rows)
 
 | Table | Rows | Purpose |
@@ -348,14 +370,49 @@ For complex ecosystem queries (detected via keywords: *correlation*, *diversity*
 - Temporal trends (e.g., "Onagawa temperature: 7.5°C Jan → 23°C Aug")
 - Bay comparisons
 
+### Reliability Ensurance Context Injection
+
+For queries involving data confidence, validation, or cross-source consistency (detected via keywords: *reliable*, *confidence*, *validate*, *anomaly*, *gap*, *temperature*, *SST*, *CTD*, etc.), reliability documents are injected alongside evidence. This gives the LLM:
+
+- **SST↔CTD validation**: 24/24 paired observations agree within ±2.0°C (mean |ΔT|=0.92°C)
+- **Gap interpolation**: 79 SST-derived surface temperature estimates during CTD sampling gaps (mean confidence=0.916)
+- **Diversity prediction**: Environment-based diversity estimates with anomaly detection (1 anomaly: 2024-07-O-s1 at −2.3σ)
+- **Corroboration tiers**: 37 verified (multi-source), 20 supported (partial), 150 standalone observations
+
 ### Provenance-Aware Prompting
 
 Every LLM query includes:
 
-- A system prompt enforcing citation rules (`[doc_id]` and `[analysis_*]` notation)
+- A system prompt enforcing citation rules (`[doc_id]`, `[analysis_*]`, and `[reliability_*]` notation)
 - Retrieved evidence with source type, time, and provenance metadata
 - Pre-computed analyses when the query warrants it
+- Cross-source reliability data when the query warrants it
 - Rules: only use provided evidence, state gaps, report units
+
+---
+
+## Reliability Ensurance System
+
+The reliability ensurance layer runs **cross-source validation** to reinforce data confidence. It uses overlapping data between CTD, metagenome, and SST sources to predict, interpolate, and validate observations.
+
+### Four Validation Engines
+
+| Engine | Method | Result |
+| --- | --- | --- |
+| **SST ↔ CTD Validation** | Compare satellite SST with CTD surface temperature on matching dates | 24/24 agree (100%), mean ΔT=0.92°C |
+| **Gap Interpolation** | Use continuous SST daily data to fill temporal gaps between CTD sampling dates | 79 days interpolated, confidence 0.916 |
+| **Diversity Prediction** | Predict expected Shannon diversity from CTD environmental conditions using known taxa-environment correlations | 37 samples evaluated, 1 anomaly detected |
+| **Corroboration Scoring** | Count independent sources confirming each observation and assign reliability tiers | 37 verified, 20 supported, 150 standalone |
+
+### Reliability Tiers
+
+- **Verified** — Multi-source agreement (e.g., SST confirms CTD surface T + diversity matches environment-based prediction)
+- **Supported** — Partial corroboration (one cross-check passed)
+- **Standalone** — Single source only, no cross-validation available
+
+### Detected Anomaly
+
+Sample `2024-07-O-s1` (Onagawa Bay, July 2024) was flagged with **−2.3σ deviation**: actual Shannon H'=1.601 vs predicted H'=3.453 given environmental conditions. This indicates a possible bloom event or dominance shift worth investigating.
 
 ---
 
@@ -388,24 +445,22 @@ Every LLM query includes:
 
 ## Application (Streamlit)
 
-The app has **9 tabs**:
+The app has **7 tabs**:
 
 | Tab | Description |
 | --- | --- |
-| **Overview** | System pipeline architecture diagram (Graphviz) and live metrics (document counts, provenance). |
-| **Chat** | Streaming LLM chat with provenance-aware RAG, source citations, expandable evidence, and analysis context for complex queries |
-| **Evidence Explorer** | Search 323 documents by keyword + source type + bay, powered by pgvector hybrid search |
-| **CTD Profiles** | Interactive depth profiles for 162 casts — temperature, salinity, DO, Chl-a with per-cast summary metrics |
-| **Taxa** | Side-by-side Kraken/MetaEuk genus bar charts + dominant upper-group composition for 82 metagenome samples |
-| **SST** | Point time series (1,848 obs) + daily regional min-max-mean summary with fill-between visualization |
-| **Pre-Analysis** | 4 sub-tabs: CTD Trends (monthly plots), Correlations (Spearman heatmap), Diversity (Shannon/Simpson scatter), Co-occurrence (Jaccard heatmap) |
-| **Database** | 4 sub-tabs: Table Browser, SQL Console (read-only), Schema inspector, Embedding statistics + Similarity Probe |
-| **Stats** | Corpus metrics, sample coverage matrix, bay distribution, provenance file count |
+| **Overview** | System pipeline architecture diagram (Graphviz) with reliability ensurance node and live metrics across all 9 pipeline stages. |
+| **Chat** | Streaming LLM chat with provenance-aware RAG, source citations, expandable evidence, and automatic analysis + reliability context injection for complex queries. |
+| **Evidence Explorer** | Search 323 documents by keyword + source type + bay, powered by pgvector hybrid search. |
+| **Data** | 3 sub-tabs: CTD Profiles (interactive depth profiles for 162 casts), Taxa (Kraken/MetaEuk bar charts for 82 samples), SST (point time series + daily summary). |
+| **Pre-Analysis** | 5 sub-tabs: CTD Trends (monthly plots), Correlations (Spearman heatmap), Diversity (Shannon/Simpson scatter), Co-occurrence (Jaccard heatmap), Reliability (SST↔CTD validation, gap interpolation, diversity prediction, corroboration summary). |
+| **Database** | 4 sub-tabs: Table Browser, SQL Console (read-only), Schema inspector, Embedding statistics + Similarity Probe. |
+| **Stats** | Corpus metrics, sample coverage matrix, bay distribution, provenance file count. |
 
 ### Sidebar Configuration Center
 
 - **Model Settings**: Controls for `chat_model`, `temperature`, `top_p` (nucleus sampling), `repeat_penalty`, and `context_window`.
-- **Retrieval Settings**: Granular control over hybrid search weights (`vector_weight`, `fts_weight`, `rrf_k` constant), `top_k_sources`, and a toggle to inject pre-analysis context.
+- **Retrieval Settings**: Granular control over hybrid search weights (`vector_weight`, `fts_weight`, `rrf_k` constant), `top_k_sources`, toggles for pre-analysis context injection and reliability context injection.
 - **Filters**: Source type and Bay filters, plus date-range filtering (`time_from`, `time_to`).
 - **Status**: Backend connection indicator (e.g., green = pgvector active, 323 embedded docs).
 
@@ -430,14 +485,15 @@ ollama pull nomic-embed-text      # embedding model (one-time)
 # 2. Run data pipeline (if starting fresh)
 python scripts/ingest.py                # ingestion + preprocessing
 python scripts/build_retrieval_docs.py  # anchor events + docs + links
-python scripts/load_db.py --reset --embed  # populate DB + embed 323 docs
 python scripts/run_pre_analysis.py      # ★ precompute ecological analyses
+python scripts/run_reliability.py       # ★ cross-source reliability validation
+python scripts/load_db.py --reset --embed  # populate DB + embed 323 docs
 
 # 3. Launch application
 streamlit run app.py
 ```
 
-### Key Config ([[config.py](http://config.py/)](file:///Users/jaronchai/Desktop/source_chat_agt/config.py))
+### Key Config ([config.py](file:///Users/jaronchai/Desktop/source_chat_agt/config.py))
 
 | Setting | Value |
 | --- | --- |
@@ -446,6 +502,9 @@ streamlit run app.py
 | `EMBEDDING_MODEL` | `nomic-embed-text` (768-dim) |
 | `CHAT_MODEL` | `qwen2.5:14b-instruct` |
 | `ANALYSIS_DIR` | `data/analysis/` |
+| `RELIABILITY_DIR` | `data/reliability/` |
+| `SST_CTD_AGREEMENT_THRESHOLD` | `2.0` (°C, configurable via `SST_CTD_THRESHOLD` env var) |
+| `DIVERSITY_ANOMALY_SIGMA` | `2.0` (configurable via `DIVERSITY_ANOMALY_SIGMA` env var) |
 
 ---
 
@@ -456,6 +515,8 @@ streamlit run app.py
 3. **Narrative text chunks** — each retrieval document is a self-contained paragraph with statistics, not raw CSV rows, making it LLM-friendly
 4. **Dual retrieval backends** — auto-detects PostgreSQL; falls back to local BM25 + numpy for environments without a database
 5. **Pre-analysis injection** — keyword-triggered: only injects analysis context for complex ecosystem queries (correlations, trends, diversity), keeping simple queries lightweight
-6. **Variable-prevalence co-occurrence** — selects genera present in 10–90% of samples, excluding ubiquitous ones that would trivially co-occur everywhere
-7. **Read-only SQL console** — blocks destructive queries (DROP, DELETE, etc.) while allowing full analytical exploration
-8. **Port 5433** — avoids conflict with any local PostgreSQL installation on the default 5432
+6. **Reliability ensurance** — modular cross-source validation layer that uses SST↔CTD agreement, environment-based diversity prediction, and corroboration scoring to reinforce data confidence; results are injected into LLM prompts alongside analysis context
+7. **Variable-prevalence co-occurrence** — selects genera present in 10–90% of samples, excluding ubiquitous ones that would trivially co-occur everywhere
+8. **Read-only SQL console** — blocks destructive queries (DROP, DELETE, etc.) while allowing full analytical exploration
+9. **Port 5433** — avoids conflict with any local PostgreSQL installation on the default 5432
+10. **Modular pipeline stages** — each layer (preprocessing, pre-analysis, reliability, retrieval) is independently runnable via CLI scripts, enabling incremental updates without full pipeline re-runs

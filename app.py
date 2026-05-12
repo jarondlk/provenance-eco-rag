@@ -153,6 +153,9 @@ with st.sidebar.expander("Retrieval", expanded=False):
     inject_analysis = st.checkbox("Inject pre-analysis context", value=True,
                                   help="When enabled, precomputed ecological analyses are "
                                        "automatically added to prompts for complex queries.")
+    inject_reliability = st.checkbox("Inject reliability context", value=True,
+                                     help="When enabled, cross-source validation and "
+                                          "corroboration results are added to prompts.")
 
 # ── Filters ──
 with st.sidebar.expander("Filters", expanded=False):
@@ -252,6 +255,20 @@ with tab_overview:
     _n_links = 0
     if _links_path.exists():
         _n_links = len(pd.read_parquet(_links_path))
+
+    _reliability_files = list(config.RELIABILITY_DIR.glob("*.parquet")) if config.RELIABILITY_DIR.exists() else []
+    _rel_docs_path = config.RELIABILITY_DIR / "reliability_documents.jsonl"
+    _n_rel_docs = 0
+    if _rel_docs_path.exists():
+        with open(_rel_docs_path, "r") as _f:
+            _n_rel_docs = sum(1 for line in _f if line.strip())
+    _corrob_path = config.RELIABILITY_DIR / "corroboration.parquet"
+    _n_verified = 0
+    _n_corrob_total = 0
+    if _corrob_path.exists():
+        _corrob_df = pd.read_parquet(_corrob_path)
+        _n_corrob_total = len(_corrob_df)
+        _n_verified = int((_corrob_df["reliability_tier"] == "verified").sum()) if "reliability_tier" in _corrob_df.columns else 0
 
     # ─── Pipeline stages as interactive expanders ───
     st.markdown("---")
@@ -396,6 +413,34 @@ when the user asks complex ecosystem questions.
         c1.metric("Analysis outputs", len(_analysis_files))
         c2.metric("Analysis docs (for RAG)", _n_analysis_docs)
         c3.metric("Trigger keywords", "correlation, diversity, trend, seasonal, ...")
+
+    # Stage 5b: Reliability Ensurance
+    with st.expander("Stage 5b -- Reliability Ensurance (Cross-Source Validation)"):
+        st.markdown("""
+Alongside pre-analysis, the system runs **cross-source validation** to reinforce
+data confidence. When one source has information that another lacks, the system
+uses available data to predict, interpolate, or corroborate observations.
+
+| Check | Method | Purpose |
+|---|---|---|
+| **SST ↔ CTD Validation** | Compare satellite SST with CTD surface temperature on matching dates | Verify instrument agreement |
+| **Gap Interpolation** | Use continuous SST to fill between sparse CTD dates | Estimate conditions during field gaps |
+| **Diversity Prediction** | Predict expected diversity from CTD environmental conditions | Detect ecological anomalies |
+| **Corroboration Scoring** | Count independent sources confirming each observation | Assign reliability tiers |
+
+**Reliability tiers:**
+- **Verified** — Multi-source agreement (e.g., SST confirms CTD + diversity matches prediction)
+- **Supported** — Partial corroboration (one cross-check passed)
+- **Standalone** — Single source only, no cross-validation available
+
+Results are injected into LLM prompts as `[reliability_*]` citations.
+""")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Reliability outputs", len(_reliability_files))
+        c2.metric("Reliability docs", _n_rel_docs)
+        c3.metric("Verified observations", _n_verified)
+        c4.metric("Total checked", _n_corrob_total)
 
     # Stage 6: Retrieval Documents
     with st.expander("Stage 6 -- Retrieval Document Generation"):
@@ -582,6 +627,9 @@ file with its SHA-256 hash.
         // ── Pre-Analysis ──
         preanalysis [label="Pre-Analysis\\n{len(_analysis_files)} ecological analyses\\n{_n_analysis_docs} RAG documents", fillcolor="#fae8ff"];
 
+        // ── Reliability Ensurance ──
+        reliability [label="Reliability Ensurance\\n{len(_reliability_files)} validation outputs\\n{_n_verified}/{_n_corrob_total} verified", fillcolor="#d1fae5", penwidth=1.5];
+
         // ── Retrieval Docs ──
         ret_docs [label="Retrieval Documents\\n{len(docs)} narrative chunks\\n({n_ctd_docs} CTD + {n_meta_docs} meta + {n_sst_docs} SST)", fillcolor="#f1f5f9"];
 
@@ -622,6 +670,9 @@ file with its SHA-256 hash.
 
         normalized -> anchors   [label="  link"];
         normalized -> preanalysis [label="  analyze"];
+        normalized -> reliability [label="  validate", color="#10b981"];
+
+        preanalysis -> reliability [label="  correlations", style=dashed, color="#10b981"];
 
         anchors    -> ret_docs [label="  build"];
         normalized -> ret_docs;
@@ -635,12 +686,13 @@ file with its SHA-256 hash.
         fts        -> retrieval [label="  rank"];
 
         preanalysis -> retrieval [label="  inject", style=dashed, color="#a855f7"];
+        reliability -> retrieval [label="  inject", style=dashed, color="#10b981"];
 
         retrieval -> llm [label="  top-K + context", penwidth=2];
     }}
     """
 
-    st.graphviz_chart(_dot, use_container_width=True)
+    st.graphviz_chart(_dot, width="stretch")
 
     # ─── Summary metrics row ───
     st.markdown("#### Pipeline Summary")
@@ -691,21 +743,61 @@ with tab_chat:
                                                  source_type=src_filter, bay=bay_filter,
                                                  time_from=t_from, time_to=t_to)
 
-                with st.expander(f"Retrieved {len(retrieved)} sources", expanded=False):
+                # Count injected context docs
+                _injected_analysis_docs = []
+                _injected_reliability_docs = []
+                if inject_analysis:
+                    _adoc_path = config.ANALYSIS_DIR / "analysis_documents.jsonl"
+                    if _adoc_path.exists():
+                        import json as _json
+                        with open(_adoc_path, encoding="utf-8") as _af:
+                            _injected_analysis_docs = [_json.loads(l) for l in _af if l.strip()]
+                if inject_reliability:
+                    _rdoc_path = config.RELIABILITY_DIR / "reliability_documents.jsonl"
+                    if _rdoc_path.exists():
+                        import json as _json
+                        with open(_rdoc_path, encoding="utf-8") as _rf:
+                            _injected_reliability_docs = [_json.loads(l) for l in _rf if l.strip()]
+
+                _total_sources = len(retrieved) + len(_injected_analysis_docs) + len(_injected_reliability_docs)
+                with st.expander(f"All {_total_sources} sources feeding the LLM", expanded=False):
+                    # Retrieved documents
+                    st.markdown(f"**Retrieved Documents ({len(retrieved)})**")
                     for r in retrieved:
-                        src_icon = {"ctd": "", "metagenome": "", "remote_sensing": ""}.get(
-                            r.get("source_type", ""), "")
                         st.markdown(
-                            f"**{src_icon} [{r.get('id', r.get('doc_id', ''))}]** "
+                            f"**[{r.get('id', r.get('doc_id', ''))}]** "
                             f"{r.get('title', '')}  \n"
-                            f"Score: `{r.get('score', 0):.4f}` | {r.get('time', r.get('date', ''))}"
+                            f"Score: `{r.get('score', 0):.4f}` | {r.get('source_type', '')} | {r.get('time', r.get('date', ''))}"
                         )
                         st.caption(_trunc(r.get("text", ""), 300))
+
+                    # Pre-analysis context
+                    if _injected_analysis_docs:
+                        st.markdown("---")
+                        st.markdown(f"**Pre-Analysis Context ({len(_injected_analysis_docs)})**")
+                        for ad in _injected_analysis_docs:
+                            st.markdown(
+                                f"**[{ad.get('id', '')}]** "
+                                f"{ad.get('title', ad.get('analysis_type', ''))}"
+                            )
+                            st.caption(_trunc(ad.get("text", ""), 300))
+
+                    # Reliability context
+                    if _injected_reliability_docs:
+                        st.markdown("---")
+                        st.markdown(f"**Reliability Context ({len(_injected_reliability_docs)})**")
+                        for rd in _injected_reliability_docs:
+                            st.markdown(
+                                f"**[{rd.get('id', '')}]** "
+                                f"{rd.get('title', rd.get('analysis_type', ''))}"
+                            )
+                            st.caption(_trunc(rd.get("text", ""), 300))
 
                 # Build prompt
                 from orchestration.unified import build_prompt
                 prompt_text = build_prompt(user_text, retrieved,
-                                           inject_analysis=inject_analysis)
+                                           inject_analysis=inject_analysis,
+                                           inject_reliability=inject_reliability)
 
                 # Call Ollama
                 full = ""
@@ -996,8 +1088,8 @@ with tab_analysis:
     if not _has_analysis:
         st.warning("No pre-analysis data found. Run `python scripts/run_pre_analysis.py` to compute.")
     else:
-        pa_tab1, pa_tab2, pa_tab3, pa_tab4 = st.tabs(
-            ["CTD Trends", "Correlations", "Diversity", "Co-occurrence"]
+        pa_tab1, pa_tab2, pa_tab3, pa_tab4, pa_tab5 = st.tabs(
+            ["CTD Trends", "Correlations", "Diversity", "Co-occurrence", "Reliability"]
         )
 
         # ── Sub-tab 1: CTD Trends ──
@@ -1253,6 +1345,207 @@ with tab_analysis:
                     st.dataframe(pairs_df, width="stretch", hide_index=True)
             else:
                 st.info("No co-occurrence data. Run `python scripts/run_pre_analysis.py`.")
+
+        # ── Sub-tab 5: Reliability ──
+        with pa_tab5:
+            _rel_dir = config.RELIABILITY_DIR
+            _has_reliability = _rel_dir.exists() and any(_rel_dir.glob("*.parquet"))
+
+            if not _has_reliability:
+                st.warning("No reliability data found. Run `python scripts/run_reliability.py` to compute.")
+            else:
+                st.markdown("### Cross-Source Reliability Ensurance")
+                st.caption("Validation, interpolation, and corroboration across CTD, metagenome, and SST sources.")
+
+                # ── SST ↔ CTD Validation ──
+                sst_ctd_path = _rel_dir / "sst_ctd_validation.parquet"
+                if sst_ctd_path.exists():
+                    sst_ctd_df = pd.read_parquet(sst_ctd_path)
+                    if not sst_ctd_df.empty:
+                        with st.expander("SST ↔ CTD Surface Temperature Validation", expanded=True):
+                            mc1, mc2, mc3, mc4 = st.columns(4)
+                            n_agree = int(sst_ctd_df["agrees"].sum())
+                            mc1.metric("Paired obs", len(sst_ctd_df))
+                            mc2.metric("Agreement", f"{n_agree}/{len(sst_ctd_df)}")
+                            mc3.metric("Mean |ΔT|", f"{sst_ctd_df['abs_delta_t'].mean():.2f}°C")
+                            mc4.metric("Mean score", f"{sst_ctd_df['reliability_score'].mean():.3f}")
+
+                            import matplotlib.pyplot as plt
+
+                            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+                            # Scatter: CTD vs SST
+                            colors = ["#10b981" if a else "#ef4444" for a in sst_ctd_df["agrees"]]
+                            ax1.scatter(sst_ctd_df["sst_daily_mean"], sst_ctd_df["ctd_surface_t"],
+                                       c=colors, s=40, alpha=0.8, edgecolors="white", linewidth=0.5)
+                            lims = [
+                                min(sst_ctd_df["sst_daily_mean"].min(), sst_ctd_df["ctd_surface_t"].min()) - 1,
+                                max(sst_ctd_df["sst_daily_mean"].max(), sst_ctd_df["ctd_surface_t"].max()) + 1,
+                            ]
+                            ax1.plot(lims, lims, "--", color="#6b7280", linewidth=1, label="1:1 line")
+                            threshold = config.SST_CTD_AGREEMENT_THRESHOLD
+                            ax1.fill_between(lims, [l - threshold for l in lims],
+                                           [l + threshold for l in lims],
+                                           alpha=0.1, color="#10b981", label=f"±{threshold}°C band")
+                            ax1.set_xlabel("Satellite SST (°C)", fontsize=11)
+                            ax1.set_ylabel("CTD Surface T (°C)", fontsize=11)
+                            ax1.set_title("SST vs CTD Surface Temperature", fontsize=12)
+                            ax1.legend(fontsize=9)
+                            ax1.grid(True, alpha=0.3)
+
+                            # Bar: ΔT by sample
+                            bar_colors = ["#10b981" if a else "#ef4444" for a in sst_ctd_df["agrees"]]
+                            ax2.bar(range(len(sst_ctd_df)), sst_ctd_df["delta_t"].values,
+                                   color=bar_colors, alpha=0.8)
+                            ax2.axhline(0, color="#6b7280", linewidth=0.8)
+                            ax2.axhline(threshold, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.5)
+                            ax2.axhline(-threshold, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.5)
+                            ax2.set_xlabel("Observation", fontsize=11)
+                            ax2.set_ylabel("ΔT (CTD − SST) °C", fontsize=11)
+                            ax2.set_title("Temperature Difference per Cast", fontsize=12)
+                            ax2.grid(True, alpha=0.3)
+
+                            fig.tight_layout()
+                            st.pyplot(fig, width="stretch")
+                            plt.close(fig)
+
+                            with st.expander("Validation data"):
+                                st.dataframe(sst_ctd_df, width="stretch", hide_index=True)
+
+                # ── Gap Interpolation ──
+                gap_path = _rel_dir / "gap_interpolation.parquet"
+                if gap_path.exists():
+                    gap_df = pd.read_parquet(gap_path)
+                    if not gap_df.empty:
+                        with st.expander("Temporal Gap Interpolation", expanded=False):
+                            gap_df["date_dt"] = pd.to_datetime(gap_df["date"])
+                            gaps_only = gap_df[gap_df["in_ctd_gap"]]
+
+                            mc1, mc2, mc3 = st.columns(3)
+                            mc1.metric("SST days", len(gap_df))
+                            mc2.metric("In CTD gaps", len(gaps_only))
+                            mc3.metric("Mean confidence",
+                                      f"{gaps_only['confidence'].mean():.3f}" if not gaps_only.empty else "–")
+
+                            import matplotlib.pyplot as plt
+
+                            fig, ax = plt.subplots(figsize=(14, 4))
+                            ax.plot(gap_df["date_dt"], gap_df["sst_daily_mean"],
+                                   linewidth=0.8, color="#3b82f6", alpha=0.6, label="SST daily mean")
+                            ax.plot(gap_df["date_dt"], gap_df["interpolated_surface_t"],
+                                   linewidth=1.2, color="#10b981", label="Interpolated surface T")
+
+                            # Mark CTD observation dates
+                            ctd_s_path = config.NORMALIZED_DIR / "ctd_summary.parquet"
+                            if ctd_s_path.exists():
+                                ctd_s = pd.read_parquet(ctd_s_path)
+                                ctd_s["ctd_date"] = pd.to_datetime(ctd_s["ctd_date"], errors="coerce")
+                                ctd_dates = ctd_s["ctd_date"].dropna().unique()
+                                for cd in ctd_dates:
+                                    ax.axvline(cd, color="#ef4444", alpha=0.3, linewidth=0.5)
+                                ax.axvline(cd, color="#ef4444", alpha=0.3, linewidth=0.5, label="CTD dates")
+
+                            ax.set_xlabel("Date", fontsize=11)
+                            ax.set_ylabel("Temperature (°C)", fontsize=11)
+                            ax.set_title("SST-based Gap Interpolation", fontsize=12)
+                            ax.legend(fontsize=9)
+                            ax.grid(True, alpha=0.3)
+                            fig.autofmt_xdate()
+                            fig.tight_layout()
+                            st.pyplot(fig, width="stretch")
+                            plt.close(fig)
+
+                # ── Diversity Prediction ──
+                div_pred_path = _rel_dir / "diversity_prediction.parquet"
+                if div_pred_path.exists():
+                    div_pred_df = pd.read_parquet(div_pred_path)
+                    if not div_pred_df.empty:
+                        with st.expander("Diversity Prediction vs Actual", expanded=False):
+                            n_anom = int(div_pred_df["is_anomaly"].sum())
+                            mc1, mc2, mc3 = st.columns(3)
+                            mc1.metric("Samples", len(div_pred_df))
+                            mc2.metric("Anomalies", n_anom)
+                            mc3.metric("Mean |deviation|",
+                                      f"{div_pred_df['deviation_sigma'].abs().mean():.2f}σ")
+
+                            import matplotlib.pyplot as plt
+
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            normal = div_pred_df[~div_pred_df["is_anomaly"]]
+                            anomaly = div_pred_df[div_pred_df["is_anomaly"]]
+
+                            ax.scatter(normal["predicted_shannon"], normal["actual_shannon"],
+                                      c="#10b981", s=50, alpha=0.8, label="Normal", edgecolors="white")
+                            if not anomaly.empty:
+                                ax.scatter(anomaly["predicted_shannon"], anomaly["actual_shannon"],
+                                          c="#ef4444", s=80, alpha=0.9, label="Anomaly",
+                                          edgecolors="white", marker="D")
+                                for _, r in anomaly.iterrows():
+                                    ax.annotate(r["sample_id"], (r["predicted_shannon"], r["actual_shannon"]),
+                                               fontsize=7, alpha=0.8, xytext=(5, 5),
+                                               textcoords="offset points")
+
+                            lims = [
+                                min(div_pred_df["predicted_shannon"].min(),
+                                    div_pred_df["actual_shannon"].min()) - 0.2,
+                                max(div_pred_df["predicted_shannon"].max(),
+                                    div_pred_df["actual_shannon"].max()) + 0.2,
+                            ]
+                            ax.plot(lims, lims, "--", color="#6b7280", linewidth=1, label="1:1")
+                            ax.set_xlabel("Predicted Shannon H'", fontsize=11)
+                            ax.set_ylabel("Actual Shannon H'", fontsize=11)
+                            ax.set_title("Diversity: Predicted vs Actual", fontsize=12)
+                            ax.legend(fontsize=9)
+                            ax.grid(True, alpha=0.3)
+                            fig.tight_layout()
+                            st.pyplot(fig, width="stretch")
+                            plt.close(fig)
+
+                            with st.expander("Prediction data"):
+                                st.dataframe(div_pred_df, width="stretch", hide_index=True)
+
+                # ── Corroboration Summary ──
+                corrob_path = _rel_dir / "corroboration.parquet"
+                if corrob_path.exists():
+                    corrob_df = pd.read_parquet(corrob_path)
+                    if not corrob_df.empty:
+                        with st.expander("Corroboration Summary", expanded=False):
+                            tier_counts = corrob_df["reliability_tier"].value_counts().to_dict()
+                            mc1, mc2, mc3, mc4 = st.columns(4)
+                            mc1.metric("Total", len(corrob_df))
+                            mc2.metric("Verified", tier_counts.get("verified", 0))
+                            mc3.metric("Supported", tier_counts.get("supported", 0))
+                            mc4.metric("Standalone", tier_counts.get("standalone", 0))
+
+                            import matplotlib.pyplot as plt
+
+                            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+                            # Pie chart of tiers
+                            tier_labels = ["Verified", "Supported", "Standalone"]
+                            tier_vals = [tier_counts.get(t.lower(), 0) for t in tier_labels]
+                            tier_colors = ["#10b981", "#f59e0b", "#ef4444"]
+                            ax1.pie(tier_vals, labels=tier_labels, colors=tier_colors,
+                                   autopct="%1.0f%%", startangle=90, textprops={"fontsize": 10})
+                            ax1.set_title("Reliability Tiers", fontsize=12)
+
+                            # Score distribution
+                            ax2.hist(corrob_df["reliability_score"], bins=20,
+                                    color="#3b82f6", alpha=0.7, edgecolor="white")
+                            ax2.set_xlabel("Reliability Score", fontsize=11)
+                            ax2.set_ylabel("Count", fontsize=11)
+                            ax2.set_title("Score Distribution", fontsize=12)
+                            ax2.grid(True, alpha=0.3)
+
+                            fig.tight_layout()
+                            st.pyplot(fig, width="stretch")
+                            plt.close(fig)
+
+                            st.dataframe(
+                                corrob_df[["sample_id", "source_type", "reliability_tier",
+                                          "reliability_score", "n_checks", "detail"]],
+                                width="stretch", hide_index=True, height=400,
+                            )
 
 
 # ═══════════════════════════════════════════

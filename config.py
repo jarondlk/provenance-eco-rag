@@ -25,8 +25,9 @@ RAW_SST_DIR    = RAW_DIR / "sst"       # symlink or copy from onagawa_sst_subset
 NORMALIZED_DIR = DATA_DIR / "normalized"
 CANONICAL_DIR  = DATA_DIR / "canonical"
 SERVING_DIR    = DATA_DIR / "serving"
-ANALYSIS_DIR   = DATA_DIR / "analysis"
-PROVENANCE_DIR = DATA_DIR / "provenance"
+ANALYSIS_DIR    = DATA_DIR / "analysis"
+RELIABILITY_DIR = DATA_DIR / "reliability"
+PROVENANCE_DIR  = DATA_DIR / "provenance"
 
 # Satellite SST source (NetCDF subset files)
 SST_NETCDF_DIR = PROJECT_ROOT / "onagawa_sst_subset"
@@ -63,6 +64,12 @@ SST_LAT_MIN, SST_LAT_MAX = 38.0, 39.0
 SST_LON_MIN, SST_LON_MAX = 141.0, 142.0
 
 # ---------------------------------------------------------------------------
+# Reliability Ensurance thresholds
+# ---------------------------------------------------------------------------
+SST_CTD_AGREEMENT_THRESHOLD = float(os.environ.get("SST_CTD_THRESHOLD", "2.0"))
+DIVERSITY_ANOMALY_SIGMA = float(os.environ.get("DIVERSITY_ANOMALY_SIGMA", "2.0"))
+
+# ---------------------------------------------------------------------------
 # Database (PostgreSQL + pgvector)
 # ---------------------------------------------------------------------------
 DATABASE_URL = os.environ.get(
@@ -83,5 +90,6 @@ EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 
 def ensure_dirs() -> None:
     """Create all output directories if they don't exist."""
-    for d in [NORMALIZED_DIR, CANONICAL_DIR, SERVING_DIR, PROVENANCE_DIR]:
+    for d in [NORMALIZED_DIR, CANONICAL_DIR, SERVING_DIR, PROVENANCE_DIR,
+              ANALYSIS_DIR, RELIABILITY_DIR]:
         d.mkdir(parents=True, exist_ok=True)

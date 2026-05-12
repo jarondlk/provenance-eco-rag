@@ -123,14 +123,59 @@ def _load_analysis_context(query: str) -> str:
     return text
 
 
+def _load_reliability_context(query: str) -> str:
+    """
+    Load reliability ensurance documents relevant to the query.
+    These provide cross-source validation and corroboration context.
+    """
+    import json
+
+    rel_path = config.RELIABILITY_DIR / "reliability_documents.jsonl"
+    if not rel_path.exists():
+        return ""
+
+    rel_docs = []
+    with open(rel_path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                rel_docs.append(json.loads(line))
+
+    if not rel_docs:
+        return ""
+
+    query_terms = set(query.lower().split())
+    reliability_keywords = {
+        "reliable", "reliability", "confidence", "trust", "validate",
+        "validation", "corroborate", "corroboration", "agree", "agreement",
+        "consistent", "consistency", "gap", "gaps", "anomaly", "anomalies",
+        "outlier", "outliers", "interpolate", "predict", "verify",
+        "cross-source", "cross", "support", "confirm",
+        # Also trigger on general science queries
+        "temperature", "sst", "ctd", "diversity", "shannon",
+        "compare", "comparison", "trend", "seasonal",
+    }
+
+    if not query_terms.intersection(reliability_keywords):
+        return ""
+
+    text = "\n=== RELIABILITY ENSURANCE ===\n"
+    text += "(Cross-source validation and corroboration results.)\n"
+    for doc in rel_docs:
+        text += f"\n[{doc['id']}] ({doc.get('analysis_type', 'reliability')})\n{doc['text']}\n"
+
+    return text
+
+
 def build_prompt(
     query: str,
     results: List[dict],
     *,
     inject_analysis: bool = True,
+    inject_reliability: bool = True,
 ) -> str:
     """
-    Build the provenance-aware system prompt with evidence and analysis context.
+    Build the provenance-aware system prompt with evidence, analysis,
+    and reliability context.
     """
     system = """You are an expert marine science assistant for the Onagawa Bay monitoring programme (Japan).
 You analyze CTD water profiles, metagenome taxonomic data, and satellite SST observations.
@@ -144,6 +189,9 @@ RULES:
 6. If pre-computed analyses are provided, use them to support your answer about
    trends, correlations, diversity patterns, or cross-source relationships.
    Cite analysis docs with [analysis_*] notation.
+7. If reliability ensurance data is provided, mention cross-source validation
+   results when relevant (e.g., SST-CTD agreement, data confidence levels).
+   Cite reliability docs with [reliability_*] notation.
 
 STUDY SITES:
 • Onagawa Bay (O) ≈ 38.44°N 141.45°E
@@ -160,8 +208,9 @@ STUDY SITES:
 
     # Inject analysis context for complex queries (when enabled)
     analysis_text = _load_analysis_context(query) if inject_analysis else ""
+    reliability_text = _load_reliability_context(query) if inject_reliability else ""
 
-    return f"{system}\n{evidence_text}{analysis_text}\n\nUSER QUESTION: {query}"
+    return f"{system}\n{evidence_text}{analysis_text}{reliability_text}\n\nUSER QUESTION: {query}"
 
 
 def ask(
