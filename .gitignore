@@ -216,3 +216,40 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data (large files - not tracked in git)
+data/raw/
+data/normalized/
+data/canonical/
+data/serving/
+data/analysis/
+data/reliability/
+data/provenance/
+onagawa_sst_subset/
+onagawa_sst_raw/
+himawari_test/
+himawari_test_unzipped/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
