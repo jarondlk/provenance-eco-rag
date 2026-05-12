@@ -127,8 +127,11 @@ def build_anchor_events(
             })
 
     df = pd.DataFrame(rows)
-    logger.info("Built %d anchor events (%d sample-based, %d SST-based)",
-                len(df),
-                len(df[df["event_id"].str.startswith("sample_")]),
-                len(df[df["event_id"].str.startswith("sst_")]))
+    if not df.empty:
+        logger.info("Built %d anchor events (%d sample-based, %d SST-based)",
+                    len(df),
+                    len(df[df["event_id"].str.startswith("sample_")]),
+                    len(df[df["event_id"].str.startswith("sst_")]))
+    else:
+        logger.info("Built 0 anchor events")
     return df
