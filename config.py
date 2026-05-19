@@ -32,8 +32,8 @@ PROVENANCE_DIR  = DATA_DIR / "provenance"
 # Satellite SST source (NetCDF subset files)
 SST_NETCDF_DIR = PROJECT_ROOT / "onagawa_sst_subset"
 
-# Raw Himawari .DAT files (optional, parsed via satpy)
-HIMAWARI_RAW_DIR      = PROJECT_ROOT / "himawari_test_unzipped"
+# Raw Himawari .DAT files (optional, parsed via satpy if available)
+HIMAWARI_RAW_DIR = PROJECT_ROOT / "himawari_raw"
 
 # ---------------------------------------------------------------------------
 # Known raw file registry (matches notebook FILES dict)

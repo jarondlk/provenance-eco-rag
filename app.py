@@ -217,9 +217,9 @@ retriever = get_retriever()
 st.title("Onagawa Source Chat")
 st.caption("Provenance-aware marine RAG — CTD · Metagenome · Satellite SST")
 
-tab_overview, tab_chat, tab_explore, tab_data, tab_analysis, tab_db, tab_stats = st.tabs(
+tab_overview, tab_chat, tab_explore, tab_data, tab_analysis, tab_db, tab_stats, tab_eval = st.tabs(
     ["Overview", "Chat", "Evidence Explorer", "Data",
-     "Pre-Analysis", "Database", "Stats"]
+     "Pre-Analysis", "Database", "Stats", "Evaluation"]
 )
 
 
@@ -1808,6 +1808,265 @@ ORDER BY n_docs DESC;"""
                         "title": r.title[:80],
                     })
                 st.dataframe(pd.DataFrame(probe_data), width="stretch", hide_index=True)
+
+
+# ═══════════════════════════════════════════
+# TAB: Evaluation
+# ═══════════════════════════════════════════
+with tab_eval:
+    st.subheader("RAG System Evaluation")
+    st.caption(
+        "Benchmark the system with predefined questions across 5 categories and "
+        "4 evaluation modes. Measures retrieval precision, source coverage, "
+        "citation accuracy, context utilization, and response latency."
+    )
+
+    from evaluation.benchmark import (
+        BENCHMARK_QUESTIONS, EVAL_MODES, EvalMode,
+        run_full_benchmark, compute_summary_metrics,
+        run_single_evaluation, extract_citations,
+    )
+
+    # ── Controls ──
+    eval_c1, eval_c2, eval_c3, eval_c4 = st.columns([2, 1, 1, 1])
+    with eval_c1:
+        eval_model = st.selectbox(
+            "Model",
+            [config.CHAT_MODEL, "qwen2.5:7b-instruct", "qwen2.5:3b",
+             "llama3.2:3b", "gemma3:4b"],
+            key="eval_model",
+        )
+    with eval_c2:
+        eval_top_k = st.number_input("Top-K", 4, 20, 8, key="eval_top_k")
+    with eval_c3:
+        eval_ctx = st.number_input("Context window", 2048, 32768, 8192, step=1024, key="eval_ctx")
+    with eval_c4:
+        eval_quick = st.checkbox("Quick eval (5 questions)", value=True, key="eval_quick")
+
+    st.markdown("---")
+
+    # ── Benchmark Questions Preview ──
+    with st.expander("Benchmark Questions (15)", expanded=False):
+        q_data = []
+        for q in BENCHMARK_QUESTIONS:
+            q_data.append({
+                "ID": q.id,
+                "Category": q.category,
+                "Question": q.question,
+                "Expected Sources": ", ".join(q.expected_source_types),
+                "Min Citations": q.expected_min_citations,
+                "Needs Analysis": q.requires_analysis,
+                "Needs Reliability": q.requires_reliability,
+            })
+        st.dataframe(pd.DataFrame(q_data), width="stretch", hide_index=True)
+
+    with st.expander("Evaluation Modes (4)", expanded=False):
+        m_data = []
+        for m in EVAL_MODES:
+            m_data.append({
+                "Mode": m.name,
+                "Pre-Analysis": "ON" if m.inject_analysis else "OFF",
+                "Reliability": "ON" if m.inject_reliability else "OFF",
+            })
+        st.dataframe(pd.DataFrame(m_data), width="stretch", hide_index=True)
+
+    # ── Run Button ──
+    if st.button("Run Evaluation", type="primary", key="run_eval"):
+        # Select questions
+        if eval_quick:
+            # 1 per category
+            seen_cats = set()
+            selected_qs = []
+            for q in BENCHMARK_QUESTIONS:
+                if q.category not in seen_cats:
+                    selected_qs.append(q)
+                    seen_cats.add(q.category)
+        else:
+            selected_qs = BENCHMARK_QUESTIONS
+
+        total_evals = len(selected_qs) * len(EVAL_MODES)
+        st.info(f"Running {len(selected_qs)} questions x {len(EVAL_MODES)} modes = {total_evals} evaluations...")
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def _progress(current, total):
+            progress_bar.progress(current / total if total > 0 else 1.0)
+            if current < total:
+                q_idx = current // len(EVAL_MODES)
+                m_idx = current % len(EVAL_MODES)
+                if q_idx < len(selected_qs):
+                    status_text.caption(
+                        f"[{current+1}/{total}] {selected_qs[q_idx].id} / {EVAL_MODES[m_idx].name}"
+                    )
+
+        results_df = run_full_benchmark(
+            model=eval_model,
+            ollama_url=ollama_url,
+            top_k=eval_top_k,
+            temperature=0.0,
+            num_ctx=eval_ctx,
+            questions=selected_qs,
+            progress_callback=_progress,
+        )
+
+        progress_bar.progress(1.0)
+        status_text.caption("Evaluation complete.")
+
+        # Store results in session state
+        st.session_state["eval_results"] = results_df
+        st.session_state["eval_model_used"] = eval_model
+        st.rerun()
+
+    # ── Display Results ──
+    if "eval_results" in st.session_state:
+        results_df = st.session_state["eval_results"]
+        eval_model_used = st.session_state.get("eval_model_used", "unknown")
+
+        st.markdown(f"### Results ({eval_model_used})")
+        st.caption(f"{len(results_df)} evaluations | {results_df['category'].nunique()} categories | "
+                    f"{results_df['mode'].nunique()} modes")
+
+        # Check for errors
+        errors = results_df[results_df["error"] != ""]
+        if not errors.empty:
+            st.warning(f"{len(errors)} evaluations had errors.")
+
+        # ── Summary by Mode ──
+        summaries = compute_summary_metrics(results_df)
+        by_mode = summaries["by_mode"]
+
+        st.markdown("#### Performance by Mode")
+        # Format for display
+        mode_display = by_mode.copy()
+        mode_display.columns = [
+            "Retrieval Precision", "Source Coverage",
+            "Avg Citations", "Citation Accuracy",
+            "Context Utilization", "Avg Latency (s)",
+        ]
+        st.dataframe(mode_display.style.format({
+            "Retrieval Precision": "{:.1%}",
+            "Source Coverage": "{:.1%}",
+            "Avg Citations": "{:.1f}",
+            "Citation Accuracy": "{:.1%}",
+            "Context Utilization": "{:.1%}",
+            "Avg Latency (s)": "{:.1f}",
+        }), width="stretch")
+
+        # ── Chart: Mode Comparison ──
+        chart_cols = st.columns(3)
+
+        with chart_cols[0]:
+            st.markdown("**Retrieval Quality**")
+            fig1, ax1 = plt.subplots(figsize=(4, 3))
+            x = range(len(by_mode))
+            ax1.bar([i - 0.15 for i in x], by_mode["retrieval_precision"],
+                    width=0.3, label="Precision", color="#3b82f6")
+            ax1.bar([i + 0.15 for i in x], by_mode["source_coverage"],
+                    width=0.3, label="Coverage", color="#10b981")
+            ax1.set_xticks(list(x))
+            ax1.set_xticklabels(by_mode.index, fontsize=8)
+            ax1.set_ylim(0, 1.1)
+            ax1.legend(fontsize=7)
+            ax1.set_ylabel("Score")
+            fig1.tight_layout()
+            st.pyplot(fig1)
+            plt.close(fig1)
+
+        with chart_cols[1]:
+            st.markdown("**Citation Metrics**")
+            fig2, ax2 = plt.subplots(figsize=(4, 3))
+            ax2.bar(by_mode.index, by_mode["citation_count"], color="#8b5cf6")
+            ax2.set_ylabel("Avg Citations")
+            ax2.tick_params(axis="x", labelsize=8)
+            fig2.tight_layout()
+            st.pyplot(fig2)
+            plt.close(fig2)
+
+        with chart_cols[2]:
+            st.markdown("**Context Utilization**")
+            fig3, ax3 = plt.subplots(figsize=(4, 3))
+            ax3.bar(by_mode.index, by_mode["context_utilization"], color="#f59e0b")
+            ax3.set_ylabel("Utilization Rate")
+            ax3.set_ylim(0, 1.1)
+            ax3.tick_params(axis="x", labelsize=8)
+            fig3.tight_layout()
+            st.pyplot(fig3)
+            plt.close(fig3)
+
+        # ── Summary by Category ──
+        st.markdown("#### Performance by Category")
+        by_cat = summaries["by_category"]
+        cat_display = by_cat.copy()
+        cat_display.columns = [
+            "Retrieval Precision", "Source Coverage",
+            "Avg Citations", "Citation Accuracy",
+            "Context Utilization", "Avg Latency (s)",
+        ]
+        st.dataframe(cat_display.style.format({
+            "Retrieval Precision": "{:.1%}",
+            "Source Coverage": "{:.1%}",
+            "Avg Citations": "{:.1f}",
+            "Citation Accuracy": "{:.1%}",
+            "Context Utilization": "{:.1%}",
+            "Avg Latency (s)": "{:.1f}",
+        }), width="stretch")
+
+        # ── Mode x Category Heatmap ──
+        st.markdown("#### Mode x Category Breakdown")
+        by_mc = summaries["by_mode_category"]
+        pivot_metric = st.selectbox(
+            "Metric to view",
+            ["retrieval_precision", "source_coverage", "citation_count",
+             "citation_accuracy", "context_utilization", "latency_seconds"],
+            key="eval_pivot_metric",
+        )
+        pivot = by_mc[pivot_metric].unstack(level=0)
+        st.dataframe(pivot.style.format("{:.3f}").background_gradient(
+            cmap="YlGn", axis=None), width="stretch")
+
+        # ── Per-Question Details ──
+        st.markdown("#### Per-Question Results")
+        for cat in results_df["category"].unique():
+            cat_df = results_df[results_df["category"] == cat]
+            with st.expander(f"{cat} ({len(cat_df)} evaluations)", expanded=False):
+                for qid in cat_df["question_id"].unique():
+                    q_df = cat_df[cat_df["question_id"] == qid]
+                    question_text = q_df.iloc[0]["question"]
+                    st.markdown(f"**{qid}**: {question_text}")
+
+                    detail_data = []
+                    for _, row in q_df.iterrows():
+                        detail_data.append({
+                            "Mode": row["mode"],
+                            "Precision": f"{row['retrieval_precision']:.0%}",
+                            "Coverage": f"{row['source_coverage']:.0%}",
+                            "Citations": row["citation_count"],
+                            "Cit. Accuracy": f"{row['citation_accuracy']:.0%}",
+                            "Ctx Util": f"{row['context_utilization']:.0%}",
+                            "Latency": f"{row['latency_seconds']:.1f}s",
+                            "Sources": row["retrieved_source_types"],
+                        })
+                    st.dataframe(pd.DataFrame(detail_data), width="stretch", hide_index=True)
+
+                    # Show response for Full mode
+                    full_row = q_df[q_df["mode"] == "Full"]
+                    if not full_row.empty:
+                        resp_text = full_row.iloc[0]["response"]
+                        if resp_text:
+                            st.caption("Response (Full mode):")
+                            st.markdown(resp_text[:500] + ("..." if len(resp_text) > 500 else ""))
+                    st.markdown("---")
+
+        # ── Export ──
+        st.markdown("#### Export")
+        csv = results_df.to_csv(index=False)
+        st.download_button(
+            "Download Results (CSV)",
+            csv,
+            file_name=f"eval_{eval_model_used}_{len(results_df)}.csv",
+            mime="text/csv",
+        )
 
 
 # ═══════════════════════════════════════════

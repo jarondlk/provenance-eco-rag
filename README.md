@@ -74,7 +74,7 @@ flowchart TB
 
 | Component | Technology |
 | --- | --- |
-| Language | Python 3.12 (37 files, ~7,800 lines) |
+| Language | Python 3.12 (41 files, ~8,800 lines) |
 | Database | PostgreSQL 16 + pgvector (cosine similarity) |
 | Container | Podman / Docker |
 | LLM | Ollama (local) — qwen2.5:14b-instruct |
@@ -130,7 +130,7 @@ streamlit run app.py
 
 ## Application
 
-The Streamlit interface has **7 tabs**:
+The Streamlit interface has **8 tabs**:
 
 | Tab | Description |
 | --- | --- |
@@ -141,6 +141,7 @@ The Streamlit interface has **7 tabs**:
 | **Pre-Analysis** | 5 sub-tabs: CTD Trends, Correlations, Diversity, Co-occurrence, Reliability |
 | **Database** | Table browser, SQL console (read-only), schema inspector, embedding statistics |
 | **Stats** | Corpus metrics, sample coverage, provenance tracking |
+| **Evaluation** | Benchmark 15 questions × 4 modes, measuring retrieval precision, source coverage, citation accuracy, context utilization, and latency. Exportable CSV results. |
 
 ### Sidebar
 
@@ -206,6 +207,9 @@ source_chat_agt/
 │   ├── query_orchestrator.py           # Cross-source evidence expansion
 │   └── unified.py                      # Prompt builder + context injection
 │
+├── evaluation/
+│   └── benchmark.py                    # 15 questions, 4 modes, 6 metrics
+│
 ├── scripts/
 │   ├── ingest.py                       # Ingestion pipeline
 │   ├── build_retrieval_docs.py         # Documents + links
@@ -219,7 +223,8 @@ source_chat_agt/
 │   ├── test_provenance.py              # SHA-256, JSONL, dedup
 │   ├── test_anchor_events.py           # Anchor creation, coordinates
 │   ├── test_reliability.py             # Agreement, tiers, anomaly, docs
-│   └── test_prompt_builder.py          # Prompt structure, context injection
+│   ├── test_prompt_builder.py          # Prompt structure, context injection
+│   └── test_evaluation.py             # Benchmark questions, citations, metrics
 │
 └── data/
     ├── raw/ctd/                        # 1 file (CTD_Onagawa.tsv)
@@ -394,11 +399,11 @@ All tests use **pytest** with **synthetic in-memory data** — no PostgreSQL, Ol
 ### Running the Tests
 
 ```bash
-# Run all 61 tests with verbose output
+# Run all 87 tests with verbose output
 pytest tests/ -v
 
 # Run with coverage report
-pytest tests/ -v --cov=preprocessing --cov=ingestion --cov=orchestration --cov=schema --cov-report=term-missing
+pytest tests/ -v --cov=preprocessing --cov=ingestion --cov=orchestration --cov=schema --cov=evaluation --cov-report=term-missing
 
 # Run a single test file
 pytest tests/test_common.py -v
@@ -412,15 +417,16 @@ pytest tests/test_reliability.py::TestSstCtdAgreementLogic -v
 ```
 ============================= test session starts ==============================
 platform darwin -- Python 3.12.2, pytest-9.0.3
-collected 61 items
+collected 87 items
 
 tests/test_anchor_events.py   7 passed
 tests/test_common.py          12 passed
+tests/test_evaluation.py      26 passed
 tests/test_prompt_builder.py  13 passed
 tests/test_provenance.py      7 passed
 tests/test_reliability.py     16 passed
 
-============================== 61 passed in 0.31s ==============================
+============================== 87 passed in 0.22s ==============================
 ```
 
 ### Test Coverage
@@ -559,6 +565,40 @@ Tests `orchestration/unified.py`, the prompt builder and context injection syste
 | `test_missing_file_returns_empty` | Any query, missing JSONL | Empty string (no crash) |
 
 **Integration (3 tests):** Verifies `build_prompt()` end-to-end with `inject_analysis` and `inject_reliability` flags toggled on/off, using `unittest.mock.patch` to redirect file paths to fixtures.
+
+#### `test_evaluation.py` — Evaluation Benchmark (26 tests)
+
+Tests `evaluation/benchmark.py`, the evaluation benchmark engine.
+
+**Benchmark Question Definitions (7 tests):**
+
+| Test | What it verifies |
+| --- | --- |
+| `test_has_15_questions` | Benchmark contains exactly 15 questions |
+| `test_five_categories` | Questions span exactly 5 categories |
+| `test_three_per_category` | Each category has exactly 3 questions |
+| `test_unique_ids` | All question IDs are unique |
+| `test_expected_source_types_not_empty` | Every question has ≥1 expected source type |
+| `test_analysis_questions_flagged` | Analysis-dependent questions have `requires_analysis=True` |
+| `test_reliability_questions_flagged` | Reliability-dependent questions have `requires_reliability=True` |
+
+**Evaluation Mode Definitions (3 tests):** Validates 4 modes exist, Baseline has both injections OFF, Full has both ON.
+
+**Citation Extraction (7 tests):**
+
+| Test | Input | Expected |
+| --- | --- | --- |
+| `test_doc_citations` | `"[ctd_2024-04-O-s1] and [meta_2024-05-O-s1]"` | 2 citations extracted |
+| `test_analysis_citations` | `"[analysis_trends]"` | Analysis citation found |
+| `test_reliability_citations` | `"[reliability_sst_ctd_validation]"` | Reliability citation found |
+| `test_mixed_citations` | Doc + analysis + reliability | 3 citations total |
+| `test_no_citations` | No brackets | 0 citations |
+| `test_sst_citations` | `"[sst_2024-04-10]"` | SST citation found |
+| `test_duplicate_citations` | Same ID twice | Both instances extracted |
+
+**Citation Accuracy (6 tests):** Tests valid, invalid, partial, analysis-sourced, reliability-sourced, and empty citation lists.
+
+**Summary Metrics (3 tests):** Validates `compute_summary_metrics` produces `by_mode`, `by_category`, and `by_mode_category` aggregations with correct structure.
 
 ---
 
