@@ -217,17 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-
-# Environment
-.env
-.venv/
-venv/
+# ── Project-specific ──
 
 # macOS
 .DS_Store
@@ -249,7 +239,3 @@ onagawa_sst_subset/
 onagawa_sst_raw/
 himawari_test/
 himawari_test_unzipped/
-
-# Jupyter
-.ipynb_checkpoints/
-notebooks/
