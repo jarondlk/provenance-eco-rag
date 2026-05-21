@@ -28,6 +28,7 @@ SERVING_DIR    = DATA_DIR / "serving"
 ANALYSIS_DIR    = DATA_DIR / "analysis"
 RELIABILITY_DIR = DATA_DIR / "reliability"
 PROVENANCE_DIR  = DATA_DIR / "provenance"
+EVALUATION_DIR  = DATA_DIR / "evaluation"
 
 # Satellite SST source (NetCDF subset files)
 SST_NETCDF_DIR = PROJECT_ROOT / "onagawa_sst_subset"
@@ -91,5 +92,5 @@ EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 def ensure_dirs() -> None:
     """Create all output directories if they don't exist."""
     for d in [NORMALIZED_DIR, CANONICAL_DIR, SERVING_DIR, PROVENANCE_DIR,
-              ANALYSIS_DIR, RELIABILITY_DIR]:
+              ANALYSIS_DIR, RELIABILITY_DIR, EVALUATION_DIR]:
         d.mkdir(parents=True, exist_ok=True)

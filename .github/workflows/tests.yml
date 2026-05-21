@@ -37,4 +37,4 @@ jobs:
             --cov=schema \
             --cov=evaluation \
             --cov-report=term-missing \
-            --cov-fail-under=25
+            --cov-fail-under=30
